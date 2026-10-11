@@ -2,6 +2,7 @@ const paths = {
   select:'M5 3v15l4-4 4 6 3-2-4-6h6L5 3Z', point:'M12 3v4m0 10v4M3 12h4m10 0h4',
   rectangle:'M5 5h14v14H5z', line:'M5 19 19 5', arrow:'m5 19 14-14M8 5h11v11',
   text:'M5 5h14M12 5v15m-4 0h8', freehand:'M4 16c3-9 6-11 7-8s-5 10-1 10 4-9 7-9 3 4 2 6',
+  livewire:'M4 6h3l3 3 4-3h6M4 6v13h6l4-4 6 4V6M7 4v4m11-4v4M8 17v4',
   erase:'m4 13 9-9 7 7-9 9H8l-4-4v-3Zm4-4 7 7M11 20h9',
   undo:'m8 4-5 5 5 5M3 9h10a7 7 0 0 1 0 14', redo:'m16 4 5 5-5 5m5-5H11a7 7 0 0 0 0 14',
   chevron:'m7 10 5 5 5-5', up:'m7 14 5-5 5 5', close:'m6 6 12 12M6 18 18 6',

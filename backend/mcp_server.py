@@ -103,6 +103,12 @@ def _feedback_with_local_paths(result: dict[str, Any], data_dir: Path | None = N
             url = item.get(f"{name}_url")
             if url:
                 item[f"{name}_path"] = str(_image_path(url, data_dir))
+        for reference in item.get("scene_refs", []):
+            if reference.get("preview_url"):
+                reference["preview_path"] = str(_image_path(reference["preview_url"], data_dir))
+            original = reference.get("source_reference_image")
+            if original and original.get("url"):
+                original["path"] = str(_image_path(original["url"], data_dir))
         for frame in [*item.get("dynamic_frames", []), *item.get("scene_snapshots", [])]:
             for name in ("reference_original", "reference_annotated", "scene_original", "scene_annotated", "comparison_reference_original", "comparison_reference", "scene_comparison"):
                 if frame.get(name + "_url"):
@@ -146,6 +152,8 @@ def _visual_tool_result(result: dict[str, Any], data_dir: Path | None = None,
             content.append(TextContent(type="text", text="Respect evidence_kind/keypoint_profile; projected_3d is not an observed 2D measurement. Cross-view identity requires evidence."))
         if item.get("human_pose_edits"):
             content.append(TextContent(type="text", text="Use $capsule-human-tracking apply-corrections with corrections_path. Only visible manual points are visible measurements; unchanged points retain parent_evidence_kind."))
+        if plan["manifest"].get("scene_refs"):
+            content.append(TextContent(type="text", text="Similar-scene references are read-only examples. Read snapshot_json_path and glb_paths on demand; edit only the current reconstruction, never its source scene."))
         for image in plan["images"]:
             content.append(TextContent(type="text", text=image_caption(image)))
             content.append(_preview_image(Path(image["path"])))

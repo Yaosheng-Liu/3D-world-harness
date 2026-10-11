@@ -30,6 +30,7 @@ class WorkspaceGateway:
         if feedback_transport == "mcp_events" and (adapter is not None or not external_review):
             raise ValueError("MCP events require external review without a Codex adapter")
         self.feedback_transport = feedback_transport
+        self.service_feedback_transport = feedback_transport
         self.mcp_events: Any = None
         self.store = store
         self.project_dir = Path(project_dir).expanduser().resolve()
@@ -52,6 +53,7 @@ class WorkspaceGateway:
         self._adapter_initialized = False
         self._adapter_event_lock = threading.RLock()
         self._adapter_token = object()
+        self._route_lock = threading.RLock()
 
     _RECONCILE_INTERVAL_SEC = 5.0
     _UNCERTAIN_GRACE_SEC = 30.0
@@ -65,16 +67,22 @@ class WorkspaceGateway:
             existing = stored.get("delivery_mode")
             if existing is not None and existing != mode:
                 raise APIError(409, f"workspace is already bound to {existing} delivery")
-            if transport != self.feedback_transport:
-                if stored.get("thread_id") or stored.get("queue") or "feedback_transport" in stored:
+            explicitly_bound = (self.external_review and transport == "legacy"
+                                and stored.get("task_connection_mode") == "desktop"
+                                and stored.get("feedback_transport_origin") == "mcp_events"
+                                and bool(stored.get("thread_id")))
+            if transport != self.service_feedback_transport:
+                if self.service_feedback_transport == "mcp_events" and explicitly_bound:
+                    self.feedback_transport = "legacy"
+                elif stored.get("thread_id") or stored.get("queue") or "feedback_transport" in stored:
                     raise APIError(409, "workspace feedback transport differs; use a separate data directory")
             if existing is None and self.external_review and (stored.get("thread_id") or stored.get("queue")):
                 raise APIError(409, "workspace already contains Codex App Server activity")
             changed = existing is None
             if changed:
                 stored["delivery_mode"] = mode
-            if self.feedback_transport == "mcp_events" and "feedback_transport" not in stored:
-                stored["feedback_transport"] = self.feedback_transport
+            if self.service_feedback_transport == "mcp_events" and "feedback_transport" not in stored:
+                stored["feedback_transport"] = self.service_feedback_transport
                 changed = True
             if changed:
                 self.store._save()
@@ -84,6 +92,7 @@ class WorkspaceGateway:
         self.ensure(preferred_session_id)
         result = self.store.workspace()
         result["feedback_transport"] = self.feedback_transport
+        result["service_feedback_transport"] = self.service_feedback_transport
         if self.mcp_events is not None:
             result["event_delivery"] = self.mcp_events.status(result["session_id"])
             self._sync_event_queue(result)
@@ -91,18 +100,20 @@ class WorkspaceGateway:
         result["events_cursor"] = result.pop("event_seq")
         result["object_prompts_supported"] = True
         result["inline_references_supported"] = True
+        result["scene_references_supported"] = not getattr(self, "blank_workbench", False)
         result["image_references_supported"] = True
         result["dynamic_scenes_supported"] = True
         result["human_pose_supported"] = self.pose_jobs is not None
         result["human_pose_inference_supported"] = False
         result["human_pose_mode"] = "external_results"
         result["pose_corrections_supported"] = True
-        result["desktop_available"] = self.external_review and bool(
-            result.get("thread_id") or getattr(self.adapter, "thread_id", None) or self.desktop_seed_thread_id
-        )
-        result["project_creation_supported"] = result["desktop_available"] or (
-            not self.external_review and callable(getattr(self.adapter, "list_models", None))
-        )
+        connection_supported = self.external_review and not getattr(self, "blank_workbench", False)
+        result["task_connection_supported"] = connection_supported
+        result["task_creation_supported"] = connection_supported
+        result["model_selection_supported"] = connection_supported
+        result["desktop_available"] = self.external_review and self._desktop_available(result)
+        result["project_creation_supported"] = self.service_feedback_transport != "mcp_events" and (
+            result["desktop_available"] or not self.external_review and callable(getattr(self.adapter, "list_models", None)))
         if self.project_name:
             result["project_name"] = self.project_name
         result["reference_clip"] = self.store.get_session(result["session_id"]).get("reference_clip")
@@ -120,10 +131,9 @@ class WorkspaceGateway:
 
     def start(self) -> None:
         self.ensure()
-        if self.feedback_transport == "mcp_events":
-            if self.mcp_events is None:
-                raise RuntimeError("MCP events service is not configured")
-            self._started = True
+        if self.service_feedback_transport == "mcp_events" and self.mcp_events is None:
+            raise RuntimeError("MCP events service is not configured")
+        if self.mcp_events is not None:
             with self.store.lock:
                 pending = [self.store.feedback_by_id(item["feedback_id"]) for item in self.store.state["workspace"]["queue"]
                            if item.get("feedback_transport") == "mcp_events"]
@@ -131,6 +141,8 @@ class WorkspaceGateway:
                 for packet in pending:
                     self.mcp_events.emit_feedback(packet)
             self.mcp_events.start()
+        if self.feedback_transport == "mcp_events":
+            self._started = True
             self.store.workspace_agent(status="external_idle")
             return
         self._restore_blocked_visual_feedback()
@@ -148,6 +160,8 @@ class WorkspaceGateway:
                 workspace = self.store.state["workspace"]
                 bound_thread_id = workspace.get("thread_id") or getattr(self.adapter, "thread_id", None)
                 for item in workspace["queue"]:
+                    if item.get("feedback_transport") == "mcp_events":
+                        continue
                     # Old workspaces predate per-packet routing. Pin them to
                     # the task that owned the workspace before any switch.
                     if item.get("target_thread_id") is None:
@@ -220,6 +234,8 @@ class WorkspaceGateway:
             feedback = {item["feedback_id"]: item for item in self.store.state["feedback"]}
             restored = []
             for item in workspace["queue"]:
+                if item.get("feedback_transport") == "mcp_events":
+                    continue
                 if (item["status"] != "blocked_stale" or item.get("turn_id")
                         or item["feedback_id"] == workspace.get("active_feedback_id")):
                     continue
@@ -258,6 +274,15 @@ class WorkspaceGateway:
         with self.store.lock:
             return self.store.state["workspace"].get("thread_id") or self.adapter.thread_id
 
+    def _desktop_available(self, workspace: dict[str, Any]) -> bool:
+        if workspace.get("thread_id") or getattr(self.adapter, "thread_id", None) or self.desktop_seed_thread_id:
+            return True
+        try:
+            from shared_thread_bridge import _private_socket_candidates
+            return len(_private_socket_candidates()) == 1
+        except (OSError, SharedThreadBridgeError):
+            return False
+
     def _desktop_entry(self) -> tuple[str | None, str]:
         """Find the Desktop daemon without binding its seed task to a new scene."""
         self.ensure()
@@ -266,9 +291,9 @@ class WorkspaceGateway:
         with self.store.lock:
             current = self.store.state["workspace"].get("thread_id") or getattr(self.adapter, "thread_id", None)
         seed = current or self.desktop_seed_thread_id
-        if not seed:
-            raise APIError(409, "this workspace is not bound to a Codex Desktop task")
-        return current, seed
+        # A neutral identity only selects/initializes the sole trusted daemon.
+        # No existing task is resumed, adopted or bound while reading choices.
+        return current, seed or "00000000-0000-0000-0000-000000000000"
 
     def _validate_target(self, thread_id: str) -> None:
         if self.target_validator is not None:
@@ -346,8 +371,6 @@ class WorkspaceGateway:
 
     def list_targets(self) -> dict[str, Any]:
         """Show compatible user tasks and the current task's saved title."""
-        if self.feedback_transport == "mcp_events":
-            raise APIError(409, "MCP events mode does not bind or create Codex Desktop tasks")
         current_id, seed_id = self._desktop_entry()
         try:
             discovered = SharedThreadBridge.discover_loaded_threads()
@@ -429,8 +452,6 @@ class WorkspaceGateway:
         return {"models": models, "default_model": default_model or (models[0]["model"] if models else None)}
 
     def list_models(self) -> dict[str, Any]:
-        if self.feedback_transport == "mcp_events":
-            raise APIError(409, "MCP events mode does not bind or create Codex Desktop tasks")
         if not self.external_review:
             if not callable(getattr(self.adapter, "list_models", None)):
                 raise APIError(409, "Codex CLI is not configured for this workspace")
@@ -471,9 +492,15 @@ class WorkspaceGateway:
             old_token = self._adapter_token
             try:
                 for item in workspace["queue"]:
+                    if item.get("feedback_transport") == "mcp_events":
+                        continue
                     if item.get("target_thread_id") is None:
                         item["target_thread_id"] = current_id
                 workspace["thread_id"] = thread_id
+                workspace["task_connection_mode"] = "desktop"
+                if self.service_feedback_transport == "mcp_events":
+                    workspace["feedback_transport_origin"] = "mcp_events"
+                    workspace["feedback_transport"] = "legacy"
                 workspace["approvals"] = []
                 workspace["agent"] = {"status": "idle", "turn_id": None, "error": None}
                 workspace["event_seq"] += 1
@@ -481,6 +508,7 @@ class WorkspaceGateway:
                 workspace["events"] = workspace["events"][-500:]
                 self.store._save()
                 self.adapter = replacement
+                self.feedback_transport = "legacy"
                 self._adapter_token = replacement_token
                 self._adapter_initialized = True
                 return old_adapter
@@ -582,17 +610,24 @@ class WorkspaceGateway:
                         specs.pop(missing_id, None)
                         specs[new_id] = spec
                         for item in workspace["queue"]:
+                            if item.get("feedback_transport") == "mcp_events":
+                                continue
                             if item.get("target_thread_id") is None:
                                 item["target_thread_id"] = current_id
                             if item.get("target_thread_id") == missing_id:
                                 item["target_thread_id"] = new_id
                         workspace["thread_id"] = new_id
+                        workspace["task_connection_mode"] = "desktop"
+                        if self.service_feedback_transport == "mcp_events":
+                            workspace["feedback_transport_origin"] = "mcp_events"
+                            workspace["feedback_transport"] = "legacy"
                         workspace["agent"] = {"status": "idle", "turn_id": None, "error": None}
                         workspace["event_seq"] += 1
                         workspace["events"].append({"id": workspace["event_seq"], "type": "empty_thread_recreated", "payload": {"old_thread_id": missing_id, "previous_bound_thread_id": current_id, "thread_id": new_id}, "at": _now()})
                         workspace["events"] = workspace["events"][-500:]
                         self.store._save()
                         self.adapter = replacement
+                        self.feedback_transport = "legacy"
                         self._adapter_token = token
                         self._adapter_initialized = True
                     except Exception:
@@ -624,9 +659,14 @@ class WorkspaceGateway:
         title: Any = None,
         permission_mode: Any = "workspace_write",
     ) -> dict[str, Any]:
-        """Create a fresh Desktop task, then route future feedback to it."""
-        if self.feedback_transport == "mcp_events":
-            raise APIError(409, "MCP events mode does not bind or create Codex Desktop tasks")
+        """Create a fresh Desktop task only after an explicit user action."""
+        with self._route_lock:
+            return self._create_target_bound(model, reasoning_effort=reasoning_effort, title=title, permission_mode=permission_mode)
+
+    def _create_target_bound(self, model: Any, *, reasoning_effort: Any = None, title: Any = None,
+                             permission_mode: Any = "workspace_write") -> dict[str, Any]:
+        if getattr(self, "blank_workbench", False):
+            raise APIError(409, "select an imported scene before creating a Codex task")
         current_id, seed_id = self._desktop_entry()
         if not isinstance(model, str) or not model:
             raise APIError(400, "select a Codex model")
@@ -730,8 +770,12 @@ class WorkspaceGateway:
 
     def switch_target(self, thread_id: Any) -> dict[str, Any]:
         """Route future feedback to another idle task without moving old packets."""
-        if self.feedback_transport == "mcp_events":
-            raise APIError(409, "MCP events mode does not bind or create Codex Desktop tasks")
+        with self._route_lock:
+            return self._switch_target_bound(thread_id)
+
+    def _switch_target_bound(self, thread_id: Any) -> dict[str, Any]:
+        if getattr(self, "blank_workbench", False):
+            raise APIError(409, "select an imported scene before connecting a Codex task")
         current_id, seed_id = self._desktop_entry()
         if not isinstance(thread_id, str):
             raise APIError(400, "thread_id must be a Codex task UUID")
@@ -842,7 +886,8 @@ class WorkspaceGateway:
                     self.store.workspace_thread(thread_id)
                     with self.store.lock:
                         workspace = self.store.state["workspace"]
-                        unpinned = [item for item in workspace["queue"] if item.get("target_thread_id") is None]
+                        unpinned = [item for item in workspace["queue"] if item.get("target_thread_id") is None
+                                    and item.get("feedback_transport") != "mcp_events"]
                         if unpinned:
                             for item in unpinned:
                                 item["target_thread_id"] = thread_id
@@ -886,7 +931,8 @@ class WorkspaceGateway:
             with self.store.lock:
                 workspace = self.store.state["workspace"]
                 if not workspace.get("active_feedback_id"):
-                    pending = any(item["status"] == "queued" and item.get("target_thread_id") == workspace.get("thread_id") for item in workspace["queue"])
+                    pending = any(item["status"] == "queued" and item.get("feedback_transport") != "mcp_events"
+                                  and item.get("target_thread_id") == workspace.get("thread_id") for item in workspace["queue"])
                     if workspace["agent"].get("status") == "disconnected" or (workspace["agent"].get("status") == "waiting" and not pending):
                         workspace["agent"] = {"status": "idle", "turn_id": None, "error": None}
                         self.store._save()
@@ -1021,6 +1067,10 @@ class WorkspaceGateway:
                 self.store.workspace_event("delivery_uncertain", {"feedback_id": feedback_id, "message": message})
 
     def submit(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._route_lock:
+            return self._submit_bound(session_id, payload)
+
+    def _submit_bound(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         workspace = self.ensure(preferred_session_id=session_id)
         if session_id != workspace["session_id"]:
             raise APIError(409, "feedback belongs to another session; use the workspace session")
@@ -1029,7 +1079,14 @@ class WorkspaceGateway:
         if self.feedback_transport == "mcp_events" and self.mcp_events is None:
             raise APIError(503, "MCP events service is not configured")
         feedback = self.store.submit_feedback(session_id, payload)
-        if self.feedback_transport == "mcp_events":
+        # Idempotent retries keep the original packet's delivery route even
+        # after the scene was explicitly connected to a Desktop task.
+        with self.store.lock:
+            queued = next(entry for entry in self.store.state["workspace"]["queue"] if entry["feedback_id"] == feedback["feedback_id"])
+            event_packet = queued.get("feedback_transport") == "mcp_events"
+        if event_packet:
+            if self.mcp_events is None:
+                raise APIError(503, "MCP events service is not configured")
             delivery = self.mcp_events.emit_feedback(feedback)
             result = copy.deepcopy(feedback)
             result["delivery"] = delivery
@@ -1396,6 +1453,8 @@ class WorkspaceGateway:
                 item = next((entry for entry in workspace["queue"] if entry["feedback_id"] == feedback_id), None)
                 if item is None:
                     raise APIError(404, "queued feedback not found")
+                if item.get("feedback_transport") == "mcp_events":
+                    raise APIError(409, "event feedback cannot be retried through a Codex task")
                 if item["status"] not in {"delivery_uncertain", "failed"}:
                     raise APIError(409, "feedback is not awaiting retry")
                 if item.get("target_thread_id") != workspace.get("thread_id"):
@@ -1502,7 +1561,9 @@ class WorkspaceGateway:
                 # The submission already authorizes sending this immutable
                 # packet. A scene published while it waits does not invalidate
                 # the captured evidence or require another send confirmation.
-                item = next((entry for entry in workspace["queue"] if entry["status"] == "queued" and entry.get("target_thread_id") == workspace.get("thread_id")), None)
+                item = next((entry for entry in workspace["queue"] if entry["status"] == "queued"
+                             and entry.get("feedback_transport") != "mcp_events"
+                             and entry.get("target_thread_id") == workspace.get("thread_id")), None)
                 if item is None:
                     return
                 revision = self.store.state["scene"]["revision"]
@@ -1557,7 +1618,9 @@ class WorkspaceGateway:
                 self._worker_running = False
             with self.store.lock:
                 workspace = self.store.state.get("workspace", {})
-                pending = not workspace.get("active_feedback_id") and any(item["status"] == "queued" and item.get("target_thread_id") == workspace.get("thread_id") for item in workspace.get("queue", []))
+                pending = not workspace.get("active_feedback_id") and any(item["status"] == "queued"
+                    and item.get("feedback_transport") != "mcp_events"
+                    and item.get("target_thread_id") == workspace.get("thread_id") for item in workspace.get("queue", []))
             if pending and not defer_retry and self.adapter.status().get("connected"):
                 self.wake()
 
@@ -1577,6 +1640,8 @@ class WorkspaceGateway:
             lines.append("人体按evidence_kind/keypoint_profile解读；projected_3d不是二维实测，跨机位身份须有证据。")
         if manifest.get("human_pose_edits"):
             lines.append("用$capsule-human-tracking apply-corrections读取corrections_path；仅visible人工点可作可见观测，未改点保留原证据类型。")
+        if manifest.get("scene_refs"):
+            lines.append("相似场景引用仅供只读类比；需要时读取其snapshot_json_path和glb_paths。只修改当前项目，勿修改来源场景或把引用物体直接当作当前场景对象。")
         return "\n".join(lines), paths
 
     @staticmethod

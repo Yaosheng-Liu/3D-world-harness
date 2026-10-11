@@ -1,12 +1,14 @@
 import * as THREE from 'three';
 import { SceneNavigation } from './scene-navigation.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { SelectionOutline } from './selection-outline.js';
 import { frameAtTime, nearestFrameAtTime, stepTime, markMatchesMoment, viewForReferenceImage } from './dynamic.js';
 import { setupMinimalLayout } from './layout.js';
 import { setupImmersive } from './immersive.js';
 import { setupTheme } from './theme.js';
 import {setupPromptAttachments} from './prompt-attachments.js';
 import {setupWorkspaceSidebar} from './workspace-sidebar.js';
+import {setupWorkspaceFolderImport} from './workspace-folder-import.js';
 import {setupSnapshotGallery} from './snapshot-gallery.js';
 import { setupFeedbackEvidence, savedEvidence } from './feedback-evidence.js';
 import { setupActionIcons, setActionIcon } from './action-icons.js';
@@ -23,13 +25,17 @@ import { poseToken, collectPoseReferences, poseFrameForReference, poseFrameLabel
 import { imageToken, collectImageReferences, createPromptImageStore } from './prompt-images.js';
 import { createPromptMentions } from './prompt-mentions.js';
 import { createPromptReferenceText } from './prompt-reference-text.js';
+import {sceneToken,sceneReferenceLabel,validSceneReference,collectSceneReferences,createSceneReferenceStore,MAX_SCENE_REFERENCES} from './scene-references.js';
+import {renderSceneReferencePreview} from './scene-reference-preview.js';
 import {referenceAliasLabel} from './prompt-reference-icons.js';
 import {createPromptReferenceHit,hitPromptReference} from './prompt-reference-hit.js';
 import {createPromptReferencePopover} from './prompt-reference-popover.js';
 import { compactReferenceMessage } from './prompt-reference-display.js';
+import { setupReferenceLivewire } from './livewire.js';
 
 const id = (name) => document.getElementById(name);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const SNAPSHOT_ZOOM_MIN = .1, SNAPSHOT_ZOOM_MAX = 8;
 const array = (value) => [value.x, value.y, value.z].map((n) => Number(n.toFixed(5)));
 const workspacePrefix = projectPrefix(location.pathname);
 const resourceURL = (url) => scopedURL(url, workspacePrefix);
@@ -58,6 +64,7 @@ const ui = {
   projectPermissions:id('project-permissions'), createProject:id('create-project'),
   openCreatedProject:id('open-created-project'), createProjectHelp:id('create-project-help'),
   viewport:id('viewport'), sceneStage:id('scene-stage'), sceneCanvas:id('scene-annotations'),
+  emptyWorkspace:id('workspace-empty'), openEmptyFolder:id('workspace-empty-open-folder'),
   referenceStage:id('reference-stage'), referenceMedia:id('reference-media'),
   referenceImage:id('reference-image'), referenceCanvas:id('reference-annotations'),
   humanPanel:id('human-pose-panel'), humanCanvas:id('human-pose-overlay'),
@@ -111,10 +118,12 @@ const state = {
   projectId:null, projectName:null, sceneDisplayName:null, projects:null, loadingProjects:false,
   projectLoadError:null, projectListSignature:null, projectModelChoice:null, projectEffortChoice:'',
   projectModelSignature:null, projectEffortSignature:null, creatingProject:false, navigatingProject:false,
+  projectUnloadSupported:false, unloadingProjectId:null, projectUnloadConfirmId:null, projectUnloadError:null, projectUnloadEpoch:0,
   pendingProjectCreate:null, projectCreationResult:null, projectCreationError:null,
   sessionId:null, sessionStatus:'connecting', feedbackCount:0,
   browserCapability:null, agent:{status:'disconnected'}, deliveryMode:'app_server', feedbackTransport:null, eventDelivery:null,
-  boundThreadId:null, desktopAvailable:false, projectCreationSupported:false, queue:[], approvals:[], targets:null, targetChoice:null,
+  boundThreadId:null, desktopAvailable:false, taskConnectionSupported:false, taskCreationSupported:false,
+  modelSelectionSupported:false, projectCreationSupported:false, queue:[], approvals:[], targets:null, targetChoice:null,
   targetOptionsSignature:null, loadingTargets:false, switchingTarget:false, targetLoadError:null,
   models:null, defaultModel:null, modelChoice:null, effortChoice:'', loadingModels:false,
   canSetPermissions:false,
@@ -125,6 +134,8 @@ const state = {
   lastPickedDetailNode:null, selectionLevel:'item',
   referencedSceneNodes:[],
   imageRefs:[], draftImageSignature:null, restoredImageRefIds:[], imageReferencesSupported:false,
+  sceneRefs:[], draftSceneReferenceSignature:null, restoredSceneRefIds:[], sceneReferencesSupported:false,
+  citingSceneProject:null, sceneReferenceRound:0,
   poseRefs:[], humanJobs:[], humanDetails:new Map(), humanDetailLoads:new Set(), humanDetailErrors:new Map(),
   humanLoading:false, humanOverlayChoice:'latest',
   poseEdits:[], poseEditor:null, poseEditDrag:null, poseCorrectionsSupported:false,
@@ -133,7 +144,7 @@ const state = {
   restoredCameraSignature:null,
   annotations:[], annotationNameCounters:{}, selectedAnnotationId:null, mode:'select', toolPane:'scene', paneModes:{reference:'select',scene:'select'}, groupId:'', drag:null, textPending:null,
   sceneSnapshots:[], snapshot:null, snapshotSequence:0, sceneView:'live', referenceZoom:1, referencePan:{x:0,y:0},
-  referencePanning:null, spacePan:false,
+  referencePanning:null, snapshotPanning:null, snapshotViewports:new Map(), spacePan:false,
   toastTimer:null, submitting:false, uploading:false, firstFrame:true,
   groundAxis:'auto', detectedUpAxis:'z', restoredUpAxis:null,
   restoredSceneRevision:null, restoredModelUrl:null
@@ -160,6 +171,7 @@ const promptReferencePopover=createPromptReferencePopover({getInlineHit:(x,y)=>
 let workspaceControls = null;
 let immersiveWorkspace = null;
 let workspaceChrome = null;
+let livewire = null;
 let feedbackEvidence = null;
 let snapshotGallery = null;
 let pendingTimelineTimeQuote = null;
@@ -168,6 +180,7 @@ let annotationPreviewTimer = null;
 let liveScenePreview = null;
 let livePreviewTimer = null;
 let workspaceSidebar = null;
+let workspaceFolderImport = null;
 let clearRequest = null;
 let backgroundTransition = null;
 let annotationReferenceDrag = null;
@@ -177,6 +190,12 @@ annotationDragGhost.setAttribute('aria-hidden', 'true');
 document.body.append(annotationDragGhost);
 const annotationHistory = createAnnotationHistory();
 const promptImageStore = createPromptImageStore(momentDatabase);
+const sceneReferenceStore = createSceneReferenceStore(momentDatabase);
+const sceneReferencePreviewImage=document.createElement('img');
+sceneReferencePreviewImage.id='prompt-scene-reference-preview';sceneReferencePreviewImage.hidden=true;
+sceneReferencePreviewImage.alt='引用时固定的只读场景预览';
+id('prompt-reference-dialog').insertBefore(sceneReferencePreviewImage,id('prompt-reference-detail'));
+id('prompt-reference-dialog').addEventListener('close',()=>{sceneReferencePreviewImage.hidden=true;sceneReferencePreviewImage.removeAttribute('src');});
 const PROMPT_DRAG_MIME = 'application/x-scene-feedback-reference';
 let promptDrag = null;
 let imagePreviewReference = null;
@@ -228,9 +247,10 @@ threeScene.add(objectLayer, feedbackLayer);
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const gltfLoader = new GLTFLoader();
-let selectionHelper = null;
+const selectionOutline = new SelectionOutline(renderer);
 let pointerDown = null;
 let sceneClicks = [];
+let selectionClearTimer = null;
 let objectListSignature = null;
 let orbitStart = null;
 
@@ -245,7 +265,7 @@ function announce(message, error=false) {
 async function api(path, options={}) {
   const request = {...options};
   if (state.browserCapability && /^(POST|PUT|PATCH|DELETE)$/i.test(request.method || '') &&
-      (path.startsWith('/api/workspace/') || path.startsWith('/api/sessions/') || path === '/api/projects')) {
+      (path.startsWith('/api/workspace/') || path.startsWith('/api/sessions/') || path === '/api/projects' || path.startsWith('/api/projects/'))) {
     request.headers = {...(request.headers || {}), 'X-Workspace-Capability':state.browserCapability};
   }
   if (options.body && typeof options.body !== 'string') {
@@ -288,6 +308,7 @@ function saveDraft({allowPlaying=false}={}) {
       poseRefs:state.poseRefs,
       poseEdits:state.poseEdits, poseEditor:state.poseEditor,
       imageRefIds:state.imageRefs.map((item) => item.id),
+      sceneRefIds:state.sceneRefs.map(item=>item.id),
       humanOverlayChoice:state.humanOverlayChoice,
       sceneRevision:state.sceneRevision,
       selectedModelUrl:sceneObject(state.selectedId)?.url || null,
@@ -300,11 +321,13 @@ function saveDraft({allowPlaying=false}={}) {
       snapshot:state.snapshot, snapshotSequence:state.snapshotSequence, sceneView:state.sceneView, sceneSnapshotIds:state.sceneSnapshots.map(entry => entry.id),
       dynamicTime:state.time, activeViewId:state.activeViewId, clipEnabled:state.clipEnabled, animationChoices:state.animationChoices,
       referenceZoom:state.referenceZoom, referencePan:state.referencePan,
+      snapshotViewports:[...state.snapshotViewports],
       eventCursor:state.eventCursor
     }));
   } catch { /* A full or disabled local store should not block feedback. */ }
   saveMomentDraft();
   saveImageReferenceDraft();
+  saveSceneReferenceDraft();
 }
 function restoreDraft() {
   try {
@@ -336,6 +359,7 @@ function restoreDraft() {
     state.poseEditor = draft.poseEditor && /^[0-9a-f]{32}$/.test(draft.poseEditor.jobId || '') && /^[0-9a-f]{32}$/.test(draft.poseEditor.referenceId || '')
       ? {...draft.poseEditor,hand:['all','body','feet','face','left','right'].includes(draft.poseEditor.hand) ? draft.poseEditor.hand : 'all',visibility:['visible','occluded','missing'].includes(draft.poseEditor.visibility) ? draft.poseEditor.visibility : 'visible'} : null;
     state.restoredImageRefIds = Array.isArray(draft.imageRefIds) ? draft.imageRefIds.filter((value) => imageToken(value)).slice(0,16) : [];
+    state.restoredSceneRefIds = Array.isArray(draft.sceneRefIds)?draft.sceneRefIds.filter(value=>sceneToken(value)).slice(0,16):[];
     state.humanOverlayChoice = ['latest','hidden'].includes(draft.humanOverlayChoice) || /^[0-9a-f]{32}$/.test(draft.humanOverlayChoice || '')
       ? draft.humanOverlayChoice : 'latest';
     state.restoredSceneRevision = Number.isInteger(draft.sceneRevision) ? draft.sceneRevision : null;
@@ -351,6 +375,7 @@ function restoreDraft() {
       state.annotations = state.annotations.filter((annotation) => annotation.pane !== 'scene');
     }
     state.paneModes = {reference:validTool(draft.paneModes?.reference), scene:state.sceneView === 'live' ? 'select' : validTool(draft.paneModes?.scene || draft.annotationMode)};
+    if(state.paneModes.scene==='livewire')state.paneModes.scene='select';
     state.toolPane = draft.toolPane === 'reference' ? 'reference' : 'scene';
     state.mode = toolMode(state.toolPane);
     state.time = Number.isFinite(draft.dynamicTime) ? Math.max(0, draft.dynamicTime) : 0;
@@ -360,6 +385,10 @@ function restoreDraft() {
     state.referenceZoom = Number.isFinite(draft.referenceZoom) ? clamp(draft.referenceZoom, 1, 8) : 1;
     state.referencePan = Number.isFinite(draft.referencePan?.x) && Number.isFinite(draft.referencePan?.y)
       ? draft.referencePan : {x:0,y:0};
+    state.snapshotViewports=new Map((Array.isArray(draft.snapshotViewports)?draft.snapshotViewports:[]).slice(-24).filter(entry=>
+      Array.isArray(entry) && typeof entry[0]==='string' && entry[0].length<=128 && entry[1] &&
+      Number.isFinite(entry[1].zoom) && Number.isFinite(entry[1].x) && Number.isFinite(entry[1].y)).map(([id,view])=>
+      [id,{zoom:clamp(view.zoom,SNAPSHOT_ZOOM_MIN,SNAPSHOT_ZOOM_MAX),x:clamp(view.x,-100000,100000),y:clamp(view.y,-100000,100000)}]));
     ui.groupSelect.value = state.groupId;
     // Preserve drafts from the former two-field composer as one freeform prompt.
     const oldPrompts = typeof draft.objectPromptsText === 'string' ? draft.objectPromptsText.trim() : '';
@@ -419,6 +448,7 @@ function applyAnnotationEdit(from, to) {
     return false;
   }
   pauseTimeline(); hideTextEditor(); state.drag = null;
+  livewire?.cancel();
   cancelPoseEditDrag();
   const previousPoseIds=new Set(state.poseEdits.map(item => item.id));
   state.poseEdits=structuredClone(to.poseEdits || []);
@@ -463,8 +493,11 @@ function setSession(session) {
     state.annotationNameCounters = {}; state.selectedAnnotationId = null;
     promptMentions?.close();promptAttachments?.close();promptReferenceText.reset();
     state.imageRefs = []; state.draftImageSignature = null; state.restoredImageRefIds = [];
+    state.sceneRefs=[];state.draftSceneReferenceSignature=null;state.restoredSceneRefIds=[];state.sceneReferenceRound++;
+    finishSnapshotPan(true);state.snapshotViewports.clear();
   }
   state.sessionId = session.session_id;
+  livewire?.sync();
   restoreComparePreferences();
   state.sessionStatus = session.status || 'open';
   state.feedbackCount = Number(session.feedback_count) || 0;
@@ -495,7 +528,12 @@ async function ensureSession() {
   renderWorkspace(workspace);
   const sessionId = workspace.session_id;
   const session = await api('/api/sessions/' + encodeURIComponent(sessionId));
-  if (params.get('session_id') !== sessionId || params.has('session')) {
+  if (workspace.blank_workbench === true) {
+    params.delete('session');
+    params.delete('session_id');
+    const query = params.toString();
+    history.replaceState(null, '', '/' + (query ? '?' + query : '') + location.hash);
+  } else if (params.get('session_id') !== sessionId || params.has('session')) {
     params.delete('session');
     params.set('session_id', sessionId);
     history.replaceState(null, '', location.pathname + '?' + params.toString());
@@ -504,6 +542,7 @@ async function ensureSession() {
   restoreDraft();
   await restoreMomentDraft();
   await restoreImageReferenceDraft();
+  await restoreSceneReferenceDraft();
   setReferenceClip(session.reference_clip || null, {restore:true});
   setReferences(session.reference_images || []);
   renderSceneView();
@@ -511,10 +550,10 @@ async function ensureSession() {
   renderTimeline(); updateMode();
   renderWorkspace(workspace);
   await fetchEvents(true);
-  if (state.feedbackTransport !== 'mcp_events' && state.deliveryMode === 'external' && state.desktopAvailable) loadTargets().catch((error) => {
+  if (state.taskConnectionSupported && state.boundThreadId) loadTargets().catch((error) => {
     ui.targetHelp.textContent = '无法读取任务列表：' + error.message;
   });
-  if (state.feedbackTransport !== 'mcp_events' && state.deliveryMode === 'external' && state.desktopAvailable) loadModels().catch(() => {
+  if (state.taskCreationSupported && state.boundThreadId) loadModels().catch(() => {
     /* The new-task form shows the connection error. */
   });
   loadProjects().catch(() => { /* The scene picker shows catalog errors. */ });
@@ -588,7 +627,7 @@ function updateSubmitLabel() {
   const status = state.agent?.status || 'disconnected';
   if (state.feedbackTransport === 'mcp_events') {
     setSubmitLabel(state.submitting ? '正在发送…' : state.pendingSubmission ? '重试发送' : '发送反馈');
-    ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject;
+    ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
     ui.note.disabled = state.sessionStatus !== 'open' || state.submitting || !!state.pendingSubmission;
     ui.referenceInput.disabled = state.sessionStatus !== 'open' || !!state.pendingSubmission || state.creatingProject || state.navigatingProject;
     ui.caption.textContent = ['submitted', 'cancelled'].includes(state.sessionStatus)
@@ -605,7 +644,7 @@ function updateSubmitLabel() {
       : bound && ['running', 'awaiting_approval', 'waiting'].includes(status) ? '加入下一轮'
       : bound ? '发送反馈' : '保存反馈';
     setSubmitLabel(label);
-    ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject;
+    ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
     ui.note.disabled = state.sessionStatus !== 'open' || state.submitting || !!state.pendingSubmission;
     ui.referenceInput.disabled = state.sessionStatus !== 'open' || !!state.pendingSubmission || state.creatingProject || state.navigatingProject;
     ui.caption.textContent = ['submitted', 'cancelled'].includes(state.sessionStatus)
@@ -626,7 +665,7 @@ function updateSubmitLabel() {
     : status === 'disconnected' || status === 'error' ? '保存反馈'
     : '发送反馈';
   setSubmitLabel(label);
-  ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject;
+  ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
   ui.note.disabled = state.sessionStatus !== 'open' || state.submitting || !!state.pendingSubmission;
   ui.referenceInput.disabled = state.sessionStatus !== 'open' || !!state.pendingSubmission || state.creatingProject || state.navigatingProject;
   if (['submitted', 'cancelled'].includes(state.sessionStatus)) ui.caption.textContent = '会话已结束，标记仍可查看。';
@@ -662,6 +701,8 @@ function updateProjectTitle() {
   ui.projectsButton.setAttribute('aria-label', '展开工作台侧栏，当前场景：' + name);
 }
 function projectBusyReason({allowCreation=false}={}) {
+  if(state.citingSceneProject) return '正在准备场景引用…';
+  if (state.unloadingProjectId) return '正在卸载场景…';
   if (state.submitting) return '正在保存反馈，请稍后切换场景。';
   if (state.uploading) return '正在导入文件，请稍后切换场景。';
   if (state.creatingTarget || state.switchingTarget) return '正在连接 Codex 任务，请稍后切换场景。';
@@ -710,50 +751,136 @@ function rememberCreatedProject(project, error=null) {
 }
 function renderProjectPicker() {
   updateProjectTitle();
-  ui.createProjectPanel.classList.toggle('hidden', state.feedbackTransport === 'mcp_events');
-  id('sidebar-new-project').hidden=state.feedbackTransport==='mcp_events';
+  ui.createProjectPanel.classList.toggle('hidden', !state.projectCreationSupported);
+  id('sidebar-new-project').hidden=!state.projectCreationSupported;
   if (!ui.projectsDialog.open) return;
   const projects = Array.isArray(state.projects) ? state.projects : [];
   const busy = projectBusyReason();
-  const signature = JSON.stringify([projects, state.projectId, busy, state.loadingProjects, state.feedbackTransport]);
-  if (signature !== state.projectListSignature) {
-    state.projectListSignature = signature;
-    ui.projectsList.replaceChildren();
-    for (const project of projects) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'project-item';
-      const heading = document.createElement('div'); heading.className = 'project-name';
-      const name = document.createElement('strong'); name.textContent = project.name || '未命名场景';
-      const current = project.project_id === state.projectId;
-      const unavailable = project.creation_status === 'unavailable';
-      button.classList.toggle('is-current',current);
-      if(current) button.setAttribute('aria-current','page');
-      const label = document.createElement('span'); label.textContent = unavailable ? '不可用' : current ? '当前' : '';
-      heading.append(name, label);
-      const detail = document.createElement('div'); detail.className = 'project-detail';
-      detail.textContent = (Number.isInteger(project.scene_revision) ? '版本 ' + project.scene_revision : '空白场景') +
-        (state.feedbackTransport === 'mcp_events' ? '' : project.thread_id ? ' · 已连接 Codex 任务' : ' · 尚未连接任务');
-      button.append(heading, detail);
-      if (project.creation_error) {
-        const error = document.createElement('div'); error.className = 'project-detail project-error';
-        error.textContent = (unavailable ? '场景不可用：' : '任务创建未完成：') + String(project.creation_error).slice(0, 200);
-        button.append(error);
-      } else if (['creating','pending','in_progress'].includes(project.creation_status)) {
-        detail.textContent += ' · 正在创建任务';
-      }
-      button.disabled = unavailable || current || !!busy || !projectNavigationURL(project, location.origin);
-      button.addEventListener('click', () => navigateProject(project));
-      ui.projectsList.append(button);
-    }
-    if (!projects.length) {
-      const empty = document.createElement('p'); empty.className = 'muted';
-      empty.textContent = state.loadingProjects ? '正在读取场景…' : '还没有可切换的场景。';
-      ui.projectsList.append(empty);
-    }
+  // Reuse each row so polling cannot dismiss a confirmation or steal focus.
+  const existing = new Map([...ui.projectsList.querySelectorAll('.project-row')].map(row => [row.dataset.projectId,row]));
+  const wanted = new Set(projects.map(project=>project.project_id));
+  for (const [projectId,row] of existing) if (!wanted.has(projectId)) {row.remove();existing.delete(projectId);}
+  let cursor = ui.projectsList.firstChild;
+  for (const project of projects) {
+    let row = existing.get(project.project_id);
+    if (!row) row = makeProjectRow(project.project_id);
+    existing.delete(project.project_id);
+    if (row !== cursor) ui.projectsList.insertBefore(row,cursor);
+    cursor = row.nextSibling;
+    const button = row.querySelector('.project-item');
+    const current = project.project_id === state.projectId;
+    const unavailable = project.creation_status === 'unavailable';
+    button.classList.toggle('is-current',current);
+    if (current) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current');
+    row.querySelector('.project-name strong').textContent = project.name || '未命名场景';
+    row.querySelector('.project-name span').textContent = unavailable ? '不可用' : current ? '当前' : '';
+    row.querySelector('.project-detail').textContent = (Number.isInteger(project.scene_revision) ? '版本 ' + project.scene_revision : '空白场景') +
+      (project.thread_id ? ' · 已连接 Codex 任务' : state.feedbackTransport === 'mcp_events' ? '' : ' · 尚未连接任务') +
+      (!project.creation_error && ['creating','pending','in_progress'].includes(project.creation_status) ? ' · 正在创建任务' : '');
+    const error = row.querySelector('.project-error');
+    error.hidden = !project.creation_error;
+    error.textContent = project.creation_error ? (unavailable ? '场景不可用：' : '任务创建未完成：') + String(project.creation_error).slice(0,200) : '';
+    button.disabled = unavailable || current || !!busy || !projectNavigationURL(project,location.origin);
+    const removable = state.projectUnloadSupported && project.can_unload === true;
+    const confirmed = removable && state.projectUnloadConfirmId === project.project_id;
+    const trigger = row.querySelector('.project-unload-trigger');
+    trigger.hidden = !removable;
+    trigger.disabled = !!busy || !!state.pendingSubmission || !state.workspaceReady;
+    trigger.setAttribute('aria-expanded',String(confirmed));
+    trigger.setAttribute('aria-label','卸载场景：' + (project.name || '未命名场景'));
+    row.querySelector('.project-unload-panel').hidden = !confirmed;
+    row.querySelector('.project-unload-description').textContent = '仅从工作台移除，源文件、场景数据和草稿保留。' +
+      (project.kind === 'imported' ? '重新导入此文件夹可恢复。' : '');
+    const pending = state.unloadingProjectId === project.project_id;
+    const confirm = row.querySelector('.project-unload-confirm');
+    confirm.textContent = pending ? '正在卸载…' : '卸载';
+    confirm.disabled = !!busy || !!state.pendingSubmission || !state.workspaceReady;
+    row.querySelector('.project-unload-cancel').disabled = !!state.unloadingProjectId;
+    const unloadError = row.querySelector('.project-unload-error');
+    unloadError.textContent = confirmed ? state.projectUnloadError || '' : '';
+    unloadError.hidden = !unloadError.textContent;
+    const cite=row.querySelector('.project-cite-trigger');
+    cite.hidden=!state.sceneReferencesSupported || current || unavailable || project.can_reference_scene===false;
+    cite.disabled=!!busy || !editable();
+    cite.textContent=state.citingSceneProject===project.project_id?'…':'引用';
+    cite.setAttribute('aria-label','引用场景：'+(project.name || '未命名场景'));
   }
-  ui.refreshProjects.disabled = state.loadingProjects || state.creatingProject || state.navigatingProject;
+  for (const row of existing.values()) row.remove();
+  let empty = ui.projectsList.querySelector('.project-list-empty');
+  if (!projects.length) {
+    if (!empty) {empty=document.createElement('p');empty.className='muted project-list-empty';ui.projectsList.append(empty);}
+    empty.textContent = state.loadingProjects ? '正在读取场景…' : '还没有可切换的场景。';
+  } else empty?.remove();
+  ui.refreshProjects.disabled = state.loadingProjects || state.creatingProject || state.navigatingProject || !!state.unloadingProjectId;
   ui.projectsStatus.textContent = busy || (state.projectLoadError ? '场景列表读取失败：' + state.projectLoadError : '');
   renderCreateProject();
+}
+function makeProjectRow(projectId) {
+  const row = document.createElement('div');row.className='project-row';row.dataset.projectId=projectId;
+  const button = document.createElement('button');button.type='button';button.className='project-item';
+  const heading = document.createElement('div');heading.className='project-name';heading.append(document.createElement('strong'),document.createElement('span'));
+  const detail = document.createElement('div');detail.className='project-detail';
+  const error = document.createElement('div');error.className='project-detail project-error';
+  button.append(heading,detail,error);
+  button.addEventListener('click',()=>navigateProject(state.projects?.find(project=>project.project_id===projectId)));
+  const trigger = document.createElement('button');trigger.type='button';trigger.className='project-unload-trigger';trigger.title='卸载场景';
+  const cite=document.createElement('button');cite.type='button';cite.className='project-cite-trigger';cite.title='引用这个场景的固定快照';
+  cite.addEventListener('click',()=>quoteOtherScene(projectId).catch(error=>announce(error.message,true)));
+  setActionIcon(trigger,'close');
+  const panel = document.createElement('div');panel.className='project-unload-panel';panel.hidden=true;panel.setAttribute('role','group');panel.setAttribute('aria-label','确认卸载场景');
+  const description = document.createElement('p');description.className='project-unload-description';
+  const unloadError = document.createElement('p');unloadError.className='project-unload-error';unloadError.setAttribute('role','status');
+  const actions = document.createElement('div');actions.className='project-unload-actions';
+  const cancel = document.createElement('button');cancel.type='button';cancel.className='project-unload-cancel';cancel.textContent='取消';
+  const confirm = document.createElement('button');confirm.type='button';confirm.className='project-unload-confirm';confirm.textContent='卸载';
+  actions.append(cancel,confirm);panel.append(description,unloadError,actions);row.append(button,cite,trigger,panel);
+  trigger.addEventListener('click',()=>{
+    if (projectBusyReason() || state.pendingSubmission) return;
+    state.projectUnloadConfirmId=state.projectUnloadConfirmId===projectId ? null : projectId;
+    state.projectUnloadError=null;renderProjectPicker();
+    if (state.projectUnloadConfirmId) cancel.focus({preventScroll:true});
+  });
+  cancel.addEventListener('click',()=>{
+    if (state.unloadingProjectId) return;
+    state.projectUnloadConfirmId=null;state.projectUnloadError=null;renderProjectPicker();trigger.focus({preventScroll:true});
+  });
+  confirm.addEventListener('click',()=>unloadSceneProject(projectId));
+  return row;
+}
+async function unloadSceneProject(projectId) {
+  const project=state.projects?.find(item=>item.project_id===projectId);
+  if (!state.projectUnloadSupported || !project?.can_unload || state.projectUnloadConfirmId!==projectId || projectBusyReason() || state.pendingSubmission) return;
+  const current=projectId===state.projectId;
+  let leaving=false;
+  state.unloadingProjectId=projectId;state.projectUnloadError=null;
+  if (current) {
+    state.navigatingProject=true;
+    pauseTimeline();hideTextEditor();state.drag=null;
+    saveDraft();
+  }
+  renderProjectPicker();updateSubmitLabel();updateMode();
+  if (current) ui.note.disabled=true;
+  try {
+    if (current) {await saveMomentDraft.pending;await promptImageStore.pending.catch(()=>{});await sceneReferenceStore.pending.catch(()=>{});}
+    const result=await api('/api/projects/'+encodeURIComponent(projectId),{method:'DELETE'});
+    const fallback=projectNavigationURL(result.fallback,location.origin);
+    if (result.unloaded_project_id!==projectId || (current && !fallback)) throw new Error('服务未返回可打开的默认场景，请重试卸载。');
+    state.projectUnloadEpoch++;
+    state.projects=state.projects.filter(item=>item.project_id!==projectId);
+    state.projectUnloadConfirmId=null;
+    if (state.projectCreationResult?.project_id===projectId) clearProjectRequest();
+    if (current) {location.assign(fallback);leaving=true;return;}
+    await loadProjects().catch(()=>{});
+  } catch (error) {
+    state.projectUnloadError='卸载未完成：'+error.message;
+    state.projectUnloadConfirmId=projectId;
+  } finally {
+    if (!leaving) {
+      state.unloadingProjectId=null;
+      if (current) state.navigatingProject=false;
+      renderProjectPicker();updateSubmitLabel();updateMode();
+    }
+  }
 }
 function renderCreateProject() {
   const pending = state.pendingProjectCreate;
@@ -828,9 +955,12 @@ function renderCreateProject() {
 async function loadProjects() {
   if (state.loadingProjects) return;
   state.loadingProjects = true; renderProjectPicker();
+  const unloadEpoch=state.projectUnloadEpoch;
   try {
     const result = await api('/api/projects');
+    if (unloadEpoch!==state.projectUnloadEpoch) return;
     state.projects = Array.isArray(result.projects) ? result.projects : [];
+    state.projectUnloadSupported=result.project_unload_supported===true;
     state.projectId = result.current_project_id || state.projectId;
     state.projectLoadError = null;
     const pending = state.pendingProjectCreate;
@@ -854,6 +984,7 @@ async function navigateProject(project, {allowCreation=false}={}) {
   saveDraft();
   await saveMomentDraft.pending;
   await promptImageStore.pending.catch(() => {});
+  await sceneReferenceStore.pending.catch(()=>{});
   try {
     location.assign(url);
     if (state.projectCreationResult?.project_id === project.project_id) clearProjectRequest();
@@ -904,10 +1035,11 @@ function openProjectsDialog() {
 function loadSidebarProjects() {
   renderProjectPicker();
   loadProjects().catch(() => {});
-  if (state.feedbackTransport !== 'mcp_events') loadModels({forProjects:true}).catch(() => {});
+  if (state.projectCreationSupported) loadModels({forProjects:true}).catch(() => {});
 }
 
 function renderCreateTarget() {
+  ui.createTargetPanel.classList.toggle('hidden',!state.taskCreationSupported);
   const models = Array.isArray(state.models) ? state.models.filter((item) => typeof item?.model === 'string') : [];
   if (!models.some((item) => item.model === state.modelChoice)) {
     state.modelChoice = models.find((item) => item.model === state.defaultModel)?.model ||
@@ -958,17 +1090,17 @@ function renderCreateTarget() {
   ui.createEffort.disabled = !models.length || !efforts.length || busy;
   ui.createPermissions.disabled = busy || !state.canSetPermissions;
   ui.createTitle.disabled = busy;
-  ui.createTarget.disabled = !models.length || busy || !state.canSetPermissions;
+  ui.createTarget.disabled = !state.taskCreationSupported || !models.length || busy || !state.canSetPermissions;
   if (state.creatingTarget) ui.createTargetHelp.textContent = '正在创建任务并连接工作台…';
   else if (state.pendingSubmission) ui.createTargetHelp.textContent = '请先确认上一条反馈的送达状态。';
   else if (state.modelLoadError) ui.createTargetHelp.textContent = '无法读取可用模型：' + state.modelLoadError;
   else if (!state.canSetPermissions) ui.createTargetHelp.textContent = '服务正在更新任务权限功能；请等当前回合结束后刷新页面。';
-  else ui.createTargetHelp.textContent = '权限模式只应用于新任务；当前场景和参考图会留在工作台。';
+  else ui.createTargetHelp.textContent = '新任务会使用当前场景目录；所选权限只应用于新任务，模型和参考图会保留。';
 }
 function renderTargetPicker() {
   minimalLayout?.refresh();
-  ui.targetPicker.classList.toggle('hidden', state.feedbackTransport === 'mcp_events' || state.deliveryMode !== 'external' || !state.desktopAvailable);
-  if (state.feedbackTransport === 'mcp_events' || state.deliveryMode !== 'external' || !state.desktopAvailable) return;
+  ui.targetPicker.classList.toggle('hidden', !state.taskConnectionSupported);
+  if (!state.taskConnectionSupported) return;
   const bound = state.boundThreadId;
   const selected = state.targets?.find((item) => item.thread_id === bound);
   ui.currentTarget.textContent = bound
@@ -1022,11 +1154,13 @@ function renderTargetPicker() {
   if (state.pendingSubmission) ui.targetHelp.textContent = '请先完成上次未确认的提交，再切换目标任务。';
   else if (targetIsBusy(chosen)) ui.targetHelp.textContent = '所选任务仍在执行；请等它空闲后切换。';
   else if (state.targetLoadError) ui.targetHelp.textContent = '无法读取任务列表：' + state.targetLoadError;
-  else ui.targetHelp.textContent = '选择已打开的任务，或在下方新建。新反馈发往所选任务；未送达的旧反馈会等切回原任务。';
+  else ui.targetHelp.textContent = state.feedbackTransport === 'mcp_events'
+    ? '连接或新建后，新反馈直接进入所选任务；已保存的插件反馈保留原投递方式。'
+    : '选择已打开的任务，或在下方新建。新反馈发往所选任务；未送达的旧反馈会等切回原任务。';
   renderCreateTarget();
 }
 async function loadTargets() {
-  if (state.feedbackTransport === 'mcp_events' || state.deliveryMode !== 'external' || !state.desktopAvailable || state.loadingTargets) return;
+  if (!state.taskConnectionSupported || state.loadingTargets) return;
   state.loadingTargets = true;
   renderTargetPicker();
   try {
@@ -1042,7 +1176,7 @@ async function loadTargets() {
   }
 }
 async function loadModels({forProjects=false}={}) {
-  if (state.feedbackTransport === 'mcp_events' || (forProjects ? !state.projectCreationSupported : !state.desktopAvailable || state.deliveryMode !== 'external') || state.loadingModels) return;
+  if ((forProjects ? !state.projectCreationSupported : !state.taskCreationSupported || !state.modelSelectionSupported) || state.loadingModels) return;
   state.loadingModels = true;
   renderTargetPicker();
   renderCreateProject();
@@ -1063,7 +1197,7 @@ async function loadModels({forProjects=false}={}) {
   }
 }
 async function createTask() {
-  if (state.feedbackTransport === 'mcp_events' || !state.desktopAvailable || !state.modelChoice || !state.canSetPermissions || state.creatingTarget || state.switchingTarget || state.submitting || state.pendingSubmission || state.creatingProject || state.navigatingProject) return;
+  if (!state.taskCreationSupported || !state.modelChoice || !state.canSetPermissions || state.creatingTarget || state.switchingTarget || state.submitting || state.pendingSubmission || state.creatingProject || state.navigatingProject) return;
   const oldThreadId = state.boundThreadId;
   const body = {model:state.modelChoice, permission_mode:ui.createPermissions.value};
   const title = ui.createTitle.value.trim();
@@ -1071,6 +1205,7 @@ async function createTask() {
   if (state.effortChoice) body.reasoning_effort = state.effortChoice;
   state.creatingTarget = true;
   renderTargetPicker();
+  updateSubmitLabel();
   try {
     const result = await api('/api/workspace/targets', {method:'POST', body});
     if (result.workspace) renderWorkspace(result.workspace);
@@ -1096,14 +1231,16 @@ async function createTask() {
   } finally {
     state.creatingTarget = false;
     renderTargetPicker();
+    updateSubmitLabel();
   }
 }
 async function switchTask(threadId) {
-  if (state.feedbackTransport === 'mcp_events' || !state.desktopAvailable || !threadId || threadId === state.boundThreadId || state.switchingTarget || state.creatingTarget || state.pendingSubmission || state.creatingProject || state.navigatingProject) return;
+  if (!state.taskConnectionSupported || !threadId || threadId === state.boundThreadId || state.switchingTarget || state.creatingTarget || state.submitting || state.pendingSubmission || state.creatingProject || state.navigatingProject) return;
   const target = state.targets?.find((item) => item.thread_id === threadId);
   if (targetIsBusy(target)) return;
   state.switchingTarget = true;
   renderTargetPicker();
+  updateSubmitLabel();
   try {
     await api('/api/workspace/target', {method:'POST', body:{thread_id:threadId}});
     await refreshWorkspace();
@@ -1115,11 +1252,21 @@ async function switchTask(threadId) {
   } finally {
     state.switchingTarget = false;
     renderTargetPicker();
+    updateSubmitLabel();
   }
+}
+function renderEmptyWorkspace() {
+  const empty=state.workspaceReady && Number.isInteger(state.sceneRevision) && !state.sceneLoading &&
+    state.sceneObjects.length===0 && state.references.length===0 && !state.referenceClip;
+  ui.emptyWorkspace.hidden=!empty;
+  document.body.classList.toggle('workspace-is-empty',empty);
+  ui.openEmptyFolder.disabled=!state.projectFolderImportSupported || state.creatingProject ||
+    state.navigatingProject || !!state.unloadingProjectId;
 }
 function renderWorkspace(workspace) {
   state.poseCorrectionsSupported = workspace.pose_corrections_supported === true;
   state.imageReferencesSupported = workspace.image_references_supported === true;
+  state.sceneReferencesSupported = workspace.scene_references_supported === true;
   renderPromptReferenceControls();
   promptMentions?.refresh();
   state.networkError = null;
@@ -1130,18 +1277,27 @@ function renderWorkspace(workspace) {
   state.eventDelivery = state.feedbackTransport === 'mcp_events' && workspace.event_delivery?.session_id === workspace.session_id
     ? workspace.event_delivery : null;
   state.desktopAvailable = workspace.desktop_available ?? !!workspace.thread_id;
+  state.taskConnectionSupported = workspace.task_connection_supported ?? (state.feedbackTransport !== 'mcp_events' && state.deliveryMode === 'external' && state.desktopAvailable);
+  state.taskCreationSupported = workspace.task_creation_supported ?? state.taskConnectionSupported;
+  state.modelSelectionSupported = workspace.model_selection_supported ?? state.taskCreationSupported;
   state.projectCreationSupported = state.feedbackTransport !== 'mcp_events' && (workspace.project_creation_supported ?? state.desktopAvailable);
-  const nextThreadId = state.feedbackTransport !== 'mcp_events' && state.deliveryMode === 'external' ? workspace.thread_id || null : null;
+  state.projectFolderImportSupported = workspace.project_folder_import_supported === true;
+  workspaceFolderImport?.refreshAvailability();
+  renderEmptyWorkspace();
+  const nextThreadId = state.deliveryMode === 'external' ? workspace.thread_id || null : null;
   if (nextThreadId !== state.boundThreadId) state.targetChoice = nextThreadId;
   state.boundThreadId = nextThreadId;
-  ui.taskButton.classList.toggle('hidden', state.feedbackTransport === 'mcp_events');
+  ui.taskButton.classList.toggle('hidden', !state.taskConnectionSupported);
   ui.directTaskHelp.classList.toggle('hidden', state.feedbackTransport === 'mcp_events');
   ui.eventTaskHelp.classList.toggle('hidden', state.feedbackTransport !== 'mcp_events');
+  ui.eventTaskHelp.textContent = state.taskConnectionSupported
+    ? '当前反馈通过插件事件发送。也可在「侧栏 → 任务」连接现有 Codex 任务或新建；连接后，新反馈直接进入该任务，已保存的插件反馈保留原投递方式。'
+    : '当前反馈通过插件事件发送；订阅状态可在「侧栏 → 执行记录」中查看。';
   ui.directDeliveryStatusHelp.classList.toggle('hidden', state.feedbackTransport === 'mcp_events');
   ui.eventDeliveryStatusHelp.classList.toggle('hidden', state.feedbackTransport !== 'mcp_events');
   ui.directDeliveryHelp.classList.toggle('hidden', state.feedbackTransport === 'mcp_events');
   ui.eventDeliveryHelp.classList.toggle('hidden', state.feedbackTransport !== 'mcp_events');
-  if (state.feedbackTransport === 'mcp_events' && workspaceSidebar?.page==='tasks') workspaceSidebar.showPage('home');
+  if (!state.taskConnectionSupported && workspaceSidebar?.page==='tasks') workspaceSidebar.showPage('home');
   renderProjectPicker();
   state.agent = workspace.agent || {status:'disconnected'};
   state.queue = Array.isArray(workspace.queue) ? workspace.queue : [];
@@ -1315,6 +1471,21 @@ function renderQueue({boundExternal=false}={}) {
   const pendingIds = new Set();
   const latest = state.queue.at(-1);
   for (const item of state.queue) {
+    if(item?.feedback_transport==='mcp_events') {
+      const card=document.createElement('div');card.className='queue-card queue-event';card.dataset.feedbackId=item.feedback_id || '';
+      const title=document.createElement('strong');
+      title.textContent='插件事件 · '+(({event_pending:'等待事件投递',event_delivered:'已送达插件',event_failed:'投递失败',
+        event_unsubscribed:item.awaiting_subscription?'等待插件订阅':'原订阅已结束'})[item.status] || '反馈已保存');
+      const body=document.createElement('div');
+      body.textContent='针对场景版本 '+(item.scene_revision ?? '—')+'。'+(item.status==='event_delivered'
+        ? '此前已送达插件；这不表示模型已开始或完成处理。'
+        : item.status==='event_failed' ? '原插件事件投递失败，反馈仍保存在工作台。'
+        : item.status==='event_unsubscribed' && !item.awaiting_subscription ? '原订阅已结束，事件不会自动重新投递。'
+        : '此前的插件反馈仍等待原事件通道接收。')+' 这条反馈不会改发到当前 Codex 任务。';
+      card.append(title,body);
+      if(item.error) {const error=document.createElement('div');error.className='queue-warning';error.textContent='原事件通道：'+String(item.error).slice(0,240);card.append(error);}
+      ui.queue.append(card);continue;
+    }
     if (!item || ((item.status === 'completed' || item.status === 'discarded') && (!boundExternal || item !== latest))) continue;
     const oldTarget = boundExternal && !!item.target_thread_id && item.target_thread_id !== state.boundThreadId;
     const retryableFailed = item.status === 'failed' && !item.turn_id;
@@ -1980,7 +2151,7 @@ async function addObject(item) {
     root.add(gltf.scene);
     root.userData.gltfRoot = gltf.scene;
     const asset = gltf.parser.json.asset || {};
-    const declaredUp = String(gltf.scene.userData.up_axis || asset.extras?.up_axis || '').toLowerCase();
+    const declaredUp = String(item.metadata?.up_axis || gltf.scene.userData.up_axis || asset.extras?.up_axis || '').toLowerCase();
     root.userData.upAxis = ['y','z'].includes(declaredUp) ? declaredUp :
       asset.generator === 'scene-feedback-harness room demo' ? 'z' : 'y';
     root.userData.loaded = true;
@@ -2189,27 +2360,14 @@ function frameAll(options={}) {
   frameBox(box, options);
 }
 function clearSelectionHelper() {
-  if (!selectionHelper) return;
-  feedbackLayer.remove(selectionHelper);
-  selectionHelper.geometry.dispose();
-  selectionHelper.material.dispose();
-  selectionHelper = null;
+  selectionOutline.setSelection(null);
 }
 function renderSelection() {
-  clearSelectionHelper();
   const item = sceneObject(state.selectedId);
   if (item) {
     const selectedNode = resolveSceneNode(state.selectedSceneNode);
     if (state.selectedSceneNode && !selectedNode) state.selectedSceneNode = null;
-    const box = selectedNode ? new THREE.Box3().setFromObject(selectedNode) : objectBox(item.id);
-    if (box) {
-      selectionHelper = new THREE.Box3Helper(box, document.documentElement.dataset.theme === 'dark' ? 0xecece8 : 0x292925);
-      selectionHelper.material.transparent = true;
-      selectionHelper.material.opacity = 0.95;
-      selectionHelper.material.depthTest = false;
-      selectionHelper.renderOrder = 20;
-      feedbackLayer.add(selectionHelper);
-    }
+    selectionOutline.setSelection(selectedNode || state.objectNodes.get(item.id));
     ui.selectionSummary.className = 'selection-summary';
     ui.selectionSummary.replaceChildren();
     const name = document.createElement('div');
@@ -2240,6 +2398,7 @@ function renderSelection() {
     ui.selectedChip.classList.remove('hidden');
     ui.clearSelection.classList.remove('hidden');
   } else {
+    clearSelectionHelper();
     state.selectedId = null;
     state.selectedSceneNode = null;
     ui.selectionSummary.className = 'selection-summary muted';
@@ -2273,7 +2432,7 @@ function renderObjectList() {
     button.type = 'button';
     button.className = 'object-item' + (state.selectedId === item.id ? ' active' : '');
     button.dataset.objectId = item.id;
-    button.title = '单击选择，双击或拖到提示中引用';
+    button.title = '单击选择，再次单击取消；双击或拖到提示中引用';
     bindPromptDrag(button,() => ({kind:'object',objectId:item.id,label:item.name || item.id}),'object');
     const swatch = document.createElement('span');
     swatch.className = 'object-color';
@@ -2283,9 +2442,11 @@ function renderObjectList() {
     const kind = document.createElement('small');
     kind.textContent = ({box:'方盒',sphere:'球体',cylinder:'圆柱',model:'模型'})[item.type] || item.type;
     button.append(swatch, name, kind);
-    button.addEventListener('click', () => selectObject(item.id));
+    button.addEventListener('pointerdown', cancelPendingSelectionClear);
+    button.addEventListener('click', () => toggleObjectSelection(item.id));
     button.addEventListener('dblclick',event=>{
-      event.preventDefault();quoteObjectReference({kind:'object',objectId:item.id,label:sceneObject(item.id)?.name || item.name || item.id});
+      event.preventDefault();selectObject(item.id);
+      quoteObjectReference({kind:'object',objectId:item.id,label:sceneObject(item.id)?.name || item.name || item.id});
     });
     const cite = document.createElement('button');
     cite.type = 'button';
@@ -2299,7 +2460,38 @@ function renderObjectList() {
     ui.objectList.append(row);
   }
 }
+function cancelPendingSelectionClear() {
+  clearTimeout(selectionClearTimer);
+  selectionClearTimer = null;
+}
+function clearObjectSelection() {
+  cancelPendingSelectionClear();
+  if (!editable()) return;
+  state.selectedId = null;
+  state.selectedSceneNode = null;
+  state.lastPickedDetailNode = null;
+  renderSelection();
+  saveDraft();
+}
+function toggleObjectSelection(objectId, sceneNode=null, detailNode=null) {
+  if (!editable() || !sceneObject(objectId)) return;
+  cancelPendingSelectionClear();
+  const selectedKey = () => sceneClickKey({objectId:state.selectedId, sceneNode:state.selectedSceneNode});
+  const sameTarget = state.selectedId === objectId && (!sceneNode ||
+    JSON.stringify(state.selectedSceneNode?.node_path) === JSON.stringify(sceneNode.node_path));
+  if (!sameTarget) {
+    selectObject(objectId, sceneNode, detailNode);
+    return;
+  }
+  const key = selectedKey();
+  // Wait for the native double-click before clearing an already selected target.
+  selectionClearTimer = setTimeout(() => {
+    selectionClearTimer = null;
+    if (selectedKey() === key) clearObjectSelection();
+  }, 500);
+}
 function selectObject(objectId, sceneNode=null, detailNode=null) {
+  cancelPendingSelectionClear();
   if (!editable()) return;
   if (!sceneObject(objectId)) return;
   state.selectedId = objectId;
@@ -2312,6 +2504,7 @@ async function loadScene(sceneData) {
   const scene = sceneData || await api('/api/scene');
   const priorRevision = state.sceneRevision;
   if (state.sceneLoading || priorRevision === scene.revision) return;
+  cancelPendingSelectionClear();
   state.sceneLoading = true;
   updateSubmitLabel(); updateMode(); renderTimeline();
   try {
@@ -2329,6 +2522,7 @@ async function loadScene(sceneData) {
       state.lastPickedDetailNode = null;
     }
     pauseTimeline();
+    clearSelectionHelper();
     for (const entry of state.animations.values()) {
       entry.mixer.stopAllAction();
       entry.mixer.uncacheRoot(entry.root);
@@ -2375,6 +2569,7 @@ async function loadScene(sceneData) {
     saveDraft();
   } finally {
     state.sceneLoading = false;
+    renderEmptyWorkspace();
     scheduleLiveScenePreview();
     updateSubmitLabel(); updateMode(); renderTimeline();
     renderProjectPicker();
@@ -2387,7 +2582,7 @@ function settleOrbit() {
 }
 function captureLiveScene({includeSize=false}={}) {
   controls.update();
-  renderer.render(threeScene, camera);
+  renderLiveScene();
   const source = renderer.domElement;
   const canvas = scaledCanvas(source.width, source.height, 1440);
   canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
@@ -2401,7 +2596,7 @@ function scheduleLiveScenePreview() {
     if (state.sceneLoading || state.sceneRevision === null) return;
     try {
       // Preview the actual renderer without changing the camera or saved evidence.
-      renderer.render(threeScene, camera);
+      renderLiveScene();
       const source=renderer.domElement, canvas=scaledCanvas(source.width,source.height,320);
       canvas.getContext('2d').drawImage(source,0,0,canvas.width,canvas.height);
       liveScenePreview=canvas.toDataURL('image/jpeg',.75);
@@ -2519,7 +2714,43 @@ function updateSnapshotGeometry() {
   );
   ui.snapshotMedia.style.width = Math.max(1, width * scale) + 'px';
   ui.snapshotMedia.style.height = Math.max(1, height * scale) + 'px';
+  updateSnapshotTransform();
   drawOverlays();
+}
+function snapshotViewport() {
+  return state.snapshotViewports.get(state.snapshot?.id) || {zoom:1,x:0,y:0};
+}
+function setSnapshotViewport(id,view) {
+  state.snapshotViewports.delete(id);state.snapshotViewports.set(id,view);
+  while(state.snapshotViewports.size>24) state.snapshotViewports.delete(state.snapshotViewports.keys().next().value);
+}
+function updateSnapshotTransform() {
+  const view=snapshotViewport();
+  // The complete bitmap, comparison and annotation canvas move together.
+  // These browser-only values never enter the snapshot or its camera evidence.
+  ui.snapshotMedia.style.transform=`translate(-50%,-50%) translate(${view.x}px,${view.y}px) scale(${view.zoom})`;
+  workspaceChrome?.layoutChanged();
+}
+function setSnapshotZoom(nextZoom,event) {
+  if(state.sceneView!=='snapshot' || !state.snapshot) return;
+  const previous=snapshotViewport(),zoom=clamp(nextZoom,SNAPSHOT_ZOOM_MIN,SNAPSHOT_ZOOM_MAX);
+  if(zoom===previous.zoom) return;
+  let {x,y}=previous;
+  if(event) {
+    const rect=ui.sceneStage.getBoundingClientRect(),anchorX=event.clientX-rect.left-rect.width/2,anchorY=event.clientY-rect.top-rect.height/2;
+    const factor=zoom/previous.zoom;
+    x=anchorX-(anchorX-x)*factor;y=anchorY-(anchorY-y)*factor;
+  }
+  setSnapshotViewport(state.snapshot.id,{zoom,x,y});updateSnapshotTransform();saveDraft();
+}
+function finishSnapshotPan(cancel=false) {
+  const gesture=state.snapshotPanning;
+  if(!gesture) return;
+  state.snapshotPanning=null;
+  if(cancel) setSnapshotViewport(gesture.snapshotId,gesture.previous);
+  delete ui.sceneStage.dataset.snapshotPanning;
+  if(ui.sceneStage.hasPointerCapture(gesture.pointerId)) ui.sceneStage.releasePointerCapture(gesture.pointerId);
+  updateSnapshotTransform();saveDraft();
 }
 function restoreComparePreferences() {
   if (!state.sessionId || comparePreferences.sessionId === state.sessionId) return;
@@ -2635,6 +2866,7 @@ function renderSceneView({persist=true}={}) {
   const hasSnapshot = !!state.snapshot;
   if (!hasSnapshot) state.sceneView = 'live';
   const showingSnapshot = hasSnapshot && state.sceneView === 'snapshot';
+  if(state.snapshotPanning && (!showingSnapshot || state.snapshotPanning.snapshotId!==state.snapshot.id)) finishSnapshotPan(true);
   if (hasSnapshot && ui.snapshotImage.src !== state.snapshot.data_url) ui.snapshotImage.src = state.snapshot.data_url;
   ui.snapshotMedia.classList.toggle('hidden', !showingSnapshot);
   ui.sceneStage.dataset.sceneView=showingSnapshot ? 'snapshot' : 'live';
@@ -2657,6 +2889,7 @@ function setReferences(references) {
   const previousActive = activeReference();
   const previousCamera = JSON.stringify(previousActive?.camera || null);
   state.references = references;
+  renderEmptyWorkspace();
   if (!clipReference() && !references.some((ref) => ref.id === state.activeReferenceId)) {
     state.activeReferenceId = references[0]?.id || null;
   }
@@ -2755,6 +2988,7 @@ function renderReferenceStrip() {
   renderReferenceViews();
 }
 function showActiveReference() {
+  livewire?.sync();
   const ref = activeReference();
   const hasReference = !!ref;
   ui.referenceMedia.classList.toggle('hidden', !hasReference);
@@ -3379,6 +3613,7 @@ function updateReferenceGeometry() {
 }
 function updateReferenceTransform() {
   ui.referenceMedia.style.transform = `translate(${state.referencePan.x}px, ${state.referencePan.y}px) scale(${state.referenceZoom})`;
+  workspaceChrome?.layoutChanged();
 }
 function setReferenceZoom(nextZoom, anchorEvent) {
   const oldZoom = state.referenceZoom;
@@ -3545,10 +3780,6 @@ function applyAnimationTime(time) {
       }
     });
   }
-  if (selectionHelper && state.selectedId) {
-    const node = resolveSceneNode(state.selectedSceneNode) || state.objectNodes.get(state.selectedId);
-    if (node) selectionHelper.box.setFromObject(node, true);
-  }
 }
 function renderAnimationChoices() {
   ui.animationChoices.replaceChildren();
@@ -3586,6 +3817,7 @@ function setReferenceClip(clip, {restore=false}={}) {
   updateAnnotationHistory();
   frameImages.clear();
   state.referenceClip = clip;
+  renderEmptyWorkspace();
   state.referenceClipSignature = signature;
   if (!referenceViews().some((view) => view.clip_id === state.activeViewId)) state.activeViewId = clip?.clip_id || null;
   const inspectedView = !restore && viewForReferenceImage(referenceViews(), inspectedReference);
@@ -3671,6 +3903,7 @@ function stepReferenceTimeline(direction) {
   } else seekTimeline(stepTime(view?.frames, state.time, direction, view?.fps || timelineFps(), timelineDuration()), {viewId:view?.clip_id});
 }
 async function seekTimeline(time, {playback=false, forcePose=false, viewId=timelineViewId(), preserveTime=false}={}) {
+  if(livewire?.active)livewire.cancel();
   if (!playback && !editable()) return false;
   if (playback && state.seeking) return false;
   if (!playback) { pauseTimeline(); hideTextEditor(); state.drag = null; }
@@ -3793,13 +4026,15 @@ function feedbackEvidenceData() {
   if(dynamicEnabled() && !state.dynamicSnapshots.length) rows.push({name:'当前视频时刻',url:activeReference()?.url,detail:'发送时保留当前参考帧与场景'});
   const imageRefs=state.imageRefs.filter(image=>promptText().includes(`[[image:${image.id}]]`));
   for(const image of imageRefs) rows.push({name:image.label || '额外图片引用',url:image.original_data_url || image.data_url,detail:'在修改说明中引用的固定图片'});
+  const scenes=state.sceneRefs.filter(entry=>promptText().includes(sceneToken(entry.id)));
+  for(const entry of scenes) rows.push({name:sceneReferenceLabel(entry.reference),url:entry.preview_data_url || entry.reference.source_reference_image?.url,detail:'提示中引用的固定只读场景'});
   const poses=state.poseRefs.filter(pose=>promptText().includes(poseToken(pose.job_id,pose.reference_id)));
   const edits=state.poseEdits.filter(pose=>promptText().includes(`[[pose_edit:${pose.id}]]`));
   if(poses.length || edits.length) rows.push({name:'人体姿态证据',detail:`${poses.length} 份姿态引用 · ${edits.length} 份关键点修正`});
   const overlay=views.some(view=>view.comparison?.enabled && view.comparison.opacity>0) || (selected ? selected.comparison?.enabled && selected.comparison.opacity>0 : comparePreferences.enabled && comparePreferences.opacity>0 && !!activeReference());
   const parts=[state.references.length ? `${state.references.length} 张参考图` : null,state.sceneSnapshots.length ? `${state.sceneSnapshots.length} 张截图` : null,
     state.dynamicSnapshots.length ? `${state.dynamicSnapshots.length} 个时刻` : dynamicEnabled() ? '当前时刻' : !selected ? '当前场景' : null,
-    `${state.annotations.length} 个标记`, imageRefs.length ? `${imageRefs.length} 张额外引用` : null,poses.length+edits.length ? '含人体证据' : null,overlay ? '含叠图' : null];
+    `${state.annotations.length} 个标记`, imageRefs.length ? `${imageRefs.length} 张额外引用` : null,scenes.length?`${scenes.length} 个参考场景`:null,poses.length+edits.length ? '含人体证据' : null,overlay ? '含叠图' : null];
   const timeHelp=dynamicEnabled() ? '在提示中输入 / 可加入片段时间；修改时段由提示说明。' : '';
   return {summary:parts.filter(Boolean).join(' · '),rows,
     description:`本轮所有保留图片和标记都会发送；引用用于说明具体目标，并不筛选其他附件。${timeHelp}缩略图为原图预览，提交时附带标注图；发送后可从聊天记录查看保存的附件。`};
@@ -4025,6 +4260,93 @@ async function restoreImageReferenceDraft() {
   } catch { /* Missing image references are reported before sending, never silently omitted. */ }
   renderPromptImageReferences();
 }
+function saveSceneReferenceDraft() {
+  if(!state.sessionId) return;
+  const signature=state.sceneRefs.map(entry=>entry.id).join(',');
+  if(signature===state.draftSceneReferenceSignature) return;
+  state.draftSceneReferenceSignature=signature;
+  const session=state.sessionId;
+  sceneReferenceStore.save(session,state.sceneRefs).catch(()=>{
+    if(state.sessionId!==session) return;
+    state.draftSceneReferenceSignature=null;
+    if(state.sceneRefs.length) announce('场景引用草稿无法保存，刷新前请先发送或保留当前页面。',true);
+  });
+}
+async function sceneReferenceFromRecord(reference,session=state.sessionId) {
+  try {
+    const cached=await sceneReferenceStore.loadPreview(session,reference.id);
+    if(cached) {
+      const entry={...cached,reference:structuredClone(reference)};
+      if(validSceneReference(entry)) return entry;
+    }
+  } catch { /* A preview cache miss must not prevent a fresh capture. */ }
+  let preview;
+  try {preview=await renderSceneReferencePreview(reference,{resourceURL});}
+  catch(error) {
+    if(!reference.source_reference_image?.url) throw Error('参考场景预览未能生成：'+error.message+'。请重试引用。');
+    preview={data_url:null,camera:null,width:0,height:0,time_sec:Number.isFinite(reference.source_reference_image.time_sec)?reference.source_reference_image.time_sec:0};
+  }
+  const entry={id:reference.id,reference:structuredClone(reference),
+    preview_data_url:preview.data_url || null,preview_camera:preview.camera || null,
+    width:preview.width,height:preview.height,time_sec:preview.time_sec ?? 0};
+  if(!validSceneReference(entry)) throw Error('参考场景没有可恢复的模型或参考图，未加入提示。');
+  await sceneReferenceStore.savePreview(session,entry).catch(()=>{});
+  return entry;
+}
+async function restoreSceneReferenceDraft() {
+  const session=state.sessionId;
+  try {
+    const saved=await sceneReferenceStore.load(session);
+    if(state.sessionId!==session) return;
+    state.sceneRefs=saved.filter(entry=>state.restoredSceneRefIds.includes(entry.id));
+    if(state.sceneReferencesSupported) for(const id of state.restoredSceneRefIds) {
+      if(state.sceneRefs.some(entry=>entry.id===id)) continue;
+      try {
+        const reference=await api('/api/workspace/scene-references/'+id);
+        const entry=await sceneReferenceFromRecord(reference,session);
+        if(state.sessionId!==session) return;
+        state.sceneRefs.push(entry);
+      } catch { /* Missing snapshots block submission instead of changing source. */ }
+    }
+    state.draftSceneReferenceSignature=null;saveSceneReferenceDraft();
+  } catch { /* Source details remain missing until recovered or removed. */ }
+  renderPromptImageReferences();
+}
+async function quoteOtherScene(projectId) {
+  const project=state.projects?.find(project=>project.project_id===projectId);
+  if(!state.sceneReferencesSupported || !editable() || state.citingSceneProject || projectBusyReason() ||
+      !project || projectId===state.projectId || project.creation_status==='unavailable' || project.can_reference_scene===false) return false;
+  const source={session:state.sessionId,project:state.projectId,revision:state.sceneRevision,round:state.sceneReferenceRound,
+    note:ui.note.value,start:ui.note.selectionStart,end:ui.note.selectionEnd};
+  const current=()=>state.sessionId===source.session && state.projectId===source.project &&
+    state.sceneRevision===source.revision && state.sceneReferenceRound===source.round && ui.note.value===source.note && editable();
+  const cited=collectSceneReferences(promptText(),state.sceneRefs);
+  const citedIds=new Set(cited.map(item=>item.id));
+  if(cited.length>=MAX_SCENE_REFERENCES && !state.sceneRefs.some(entry=>citedIds.has(entry.id) && entry.reference.source_project_id===projectId)) throw Error('一条提示最多引用 4 个参考场景，请先移除一处引用。');
+  state.citingSceneProject=projectId;renderProjectPicker();updateSubmitLabel();
+  try {
+    const reference=await api('/api/workspace/scene-references',{method:'POST',body:{project_id:projectId}});
+    if(cited.length>=MAX_SCENE_REFERENCES && !citedIds.has(reference.id)) throw Error('这个场景已有新快照；一条提示最多引用 4 个参考场景，请先移除一处引用。');
+    const existing=state.sceneRefs.find(entry=>entry.id===reference.id);
+    const entry=existing || await sceneReferenceFromRecord(reference,source.session);
+    if(!current()) throw Error('场景或提示已更改，已取消加入这处引用；请再引用一次。');
+    const referenced=new Set(cited.map(item=>item.id));
+    const next=existing?state.sceneRefs:[...state.sceneRefs.filter(item=>!referenced.has(item.id)).slice(-12),
+      ...state.sceneRefs.filter(item=>referenced.has(item.id)),entry];
+    const signature=next.map(item=>item.id).join(',');
+    // An unchanged archived snapshot already owns its preview and draft bytes.
+    // Wait for an in-flight save without cloning and rewriting them again.
+    if(existing && state.draftSceneReferenceSignature===signature) await sceneReferenceStore.pending;
+    else await sceneReferenceStore.save(source.session,next);
+    if(!current()) throw Error('场景或提示已更改，已取消加入这处引用；请再引用一次。');
+    await workspaceSidebar.close({restoreFocus:false});
+    if(!current()) throw Error('场景或提示已更改，已取消加入这处引用；请再引用一次。');
+    state.sceneRefs=next;state.draftSceneReferenceSignature=signature;
+    ui.note.setSelectionRange(source.start,source.end);
+    if(!insertNoteReference(sceneReferenceLabel(entry.reference),sceneToken(entry.id),{preserveTool:true})) return false;
+    saveDraft();return true;
+  } finally {state.citingSceneProject=null;renderProjectPicker();updateSubmitLabel();}
+}
 function saveMomentDraft() {
   if (!state.sessionId) return;
   const signature = JSON.stringify([state.dynamicSnapshots, state.sceneSnapshots].map(entries => entries.map(entry =>
@@ -4134,7 +4456,7 @@ function updateSceneHint() {
       : '直接在渲染图上圈画，自动保留当前截图';
   } else if (toolMode('scene') === 'select') {
     const selected = selectedAnnotation();
-    ui.sceneHint.textContent = selected?.pane === 'scene' ? selected.name + ' · Backspace 删除 · 拖到会话引用' : '点击标记选中 · 拖到会话引用 · 3D 浏览可旋转场景';
+    ui.sceneHint.textContent = selected?.pane === 'scene' ? selected.name + ' · Backspace 删除 · 拖到会话引用 · 滚轮缩放' : '滚轮缩放 · 空白处拖动平移 · Space 或中／右键拖动 · 点击标记选中';
   } else {
     ui.sceneHint.textContent = '在场景上' +
       ({point:'点一下',rectangle:'拖动框选',line:'拖动画线',arrow:'拖动画箭头',text:'点击加文字',freehand:'随手圈画'})[toolMode('scene')] +
@@ -4172,17 +4494,19 @@ function updateMode() {
   drawOverlays();
 }
 function validTool(mode) {
-  return ['select','point','rectangle','line','arrow','text','freehand','erase'].includes(mode) ? mode : 'select';
+  return ['select','point','rectangle','line','arrow','text','freehand','erase','livewire'].includes(mode) ? mode : 'select';
 }
 function toolMode(pane) { return state.paneModes[pane] || 'select'; }
 function activateToolPane(pane) {
   if (state.toolPane === pane) return;
+  livewire?.cancel();
   state.toolPane = pane; state.mode = toolMode(pane);
   updateMode();
 }
 function setMode(mode, pane=state.toolPane) {
   if (state.submitting || state.pendingSubmission) return;
-  if (!['select','point','rectangle','line','arrow','text','freehand','erase'].includes(mode)) return;
+  if (validTool(mode)!==mode || mode==='livewire' && pane!=='reference') return;
+  livewire?.cancel();
   state.toolPane = pane; state.paneModes[pane] = mode; state.mode = mode;
   cancelPoseEditDrag();
   if (state.poseEditor?.restoreLatest) state.humanOverlayChoice='latest';
@@ -4247,6 +4571,7 @@ function addAnnotation(annotation) {
     if (state.snapshot.selected_scene_nodes[0]) item.scene_node = {...state.snapshot.selected_scene_nodes[0]};
   }
   if (annotation.text) item.text = annotation.text;
+  if (annotation.name) item.name = annotation.name;
   if (annotation.points) item.points = annotation.points;
   if (dynamicEnabled() && moment?.time_sec !== undefined) {
     item.frame_id = moment.id;
@@ -4326,9 +4651,8 @@ async function revealAnnotation(annotation) {
   workspaceChrome?.open(annotation.pane);
   (annotation.pane === 'scene' ? ui.sceneCanvas : ui.referenceCanvas).focus({preventScroll:true});
 }
-function annotationFromPointer(event,pane) {
+function annotationFromPointer(event,pane,canvas=event.currentTarget) {
   if (pane === 'scene' && state.sceneView !== 'snapshot') return;
-  const canvas = event.currentTarget;
   const point = pointFromPointer(event,canvas), rect = canvas.getBoundingClientRect();
   const zoom = rect.width / canvas.clientWidth;
   const scale = Math.max(1,Math.min(canvas.clientWidth,canvas.clientHeight)/550)*zoom;
@@ -4420,6 +4744,10 @@ function annotationPointerDown(event, pane) {
   if (!editable() || state.spacePan || event.button !== 0) return;
   if(event.isPrimary===false){annotationClicks=[];return;}
   const mode = toolMode(pane);
+  if (mode === 'livewire') {
+    if(pane==='reference') { event.preventDefault();event.currentTarget.focus({preventScroll:true});livewire?.anchor(pointFromPointer(event,event.currentTarget)); }
+    return;
+  }
   if (mode === 'select') {
     selectAnnotationFromPointer(event,pane);
     if(!annotationReferenceDrag)annotationClicks=[];
@@ -4453,6 +4781,8 @@ function annotationPointerDown(event, pane) {
   drawOverlays();
 }
 function annotationPointerMove(event) {
+  if(event.currentTarget===ui.referenceCanvas && toolMode('reference')==='livewire' && !state.spacePan && !state.referencePanning)
+    livewire?.move(pointFromPointer(event,ui.referenceCanvas));
   if (moveAnnotationReferenceDrag(event)) return;
   if (!state.drag || state.drag.pointerId !== event.pointerId) return;
   if (state.drag.type === 'erase') {
@@ -4610,6 +4940,7 @@ function prepareCanvas(canvas) {
   return {context, width:logicalWidth, height:logicalHeight};
 }
 function drawOverlays() {
+  livewire?.sync();
   if (!selectedAnnotation()) state.selectedAnnotationId = null;
   updateAnnotationSelectionHint();
   for (const pane of ['reference','scene']) {
@@ -4628,6 +4959,7 @@ function drawOverlays() {
         points:state.drag.points
       }, surface.width, surface.height, true);
     }
+    if(pane==='reference')livewire?.draw(surface.context,surface.width,surface.height);
   }
   renderHumanPosePanel();
   drawHumanPoseOverlay();
@@ -4641,6 +4973,7 @@ function renderAnnotations() {
   renderSceneSnapshots();
   renderReferenceStrip();
   updateSceneHint();
+  renderPromptImageReferences();
   if (!state.annotations.length) {
     const empty = document.createElement('div');
     empty.className = 'muted';
@@ -4903,12 +5236,12 @@ function capturePromptImage(pane, saved=null) {
       const visible = feedbackLayer.visible;
       feedbackLayer.visible = false;
       try {
-        renderer.render(threeScene,camera);
+        renderLiveScene();
         source = document.createElement('canvas');
         source.width = renderer.domElement.width; source.height = renderer.domElement.height;
         source.getContext('2d').drawImage(renderer.domElement,0,0);
         entry.camera = structuredClone(cameraData());
-      } finally { feedbackLayer.visible = visible; renderer.render(threeScene,camera); }
+      } finally { feedbackLayer.visible = visible; renderLiveScene(); }
       marks = [];
       if (dynamicEnabled()) {
         entry.time_sec = state.time;
@@ -4978,8 +5311,31 @@ function previewPromptImage(entry,source={}) {
   promptReferencePopover.show(ui.imagePreview,source);
 }
 function promptText() { return promptReferenceText.expand(ui.note.value); }
+function annotationReferenceProblems(note=promptText()) {
+  const counts=new Map(),records=new Map(promptReferenceText.exportRecords().map(entry=>[entry.token,entry]));
+  for(const mark of state.annotations) counts.set(mark.id,(counts.get(mark.id) || 0)+1);
+  const found=new Map();
+  for(const match of note.matchAll(/\[\[annotation:([A-Za-z0-9_-]{1,64})\]\]/g)) {
+    const count=counts.get(match[1]) || 0;
+    if(count===1 || found.has(match[0])) continue;
+    const entry=records.get(match[0]),name=entry?.name || entry?.label || '标记';
+    found.set(match[0],{token:match[0],alias:entry?.alias || match[0],name,
+      reason:count?'重复':'已删除'});
+  }
+  return [...found.values()];
+}
+function focusInvalidPromptReference(error) {
+  ui.note.focus({preventScroll:true});
+  const tokens=new Set(error.invalidReferences?.map(item=>item.token) || []);
+  if(!tokens.size) return;
+  const range=promptReferenceText.ranges(ui.note.value).find(range=>tokens.has(range.entry.token));
+  const raw=range?null:[...tokens].map(token=>({start:ui.note.value.indexOf(token),end:ui.note.value.indexOf(token)+token.length})).find(range=>range.start>=0);
+  const target=range || raw;
+  if(target) ui.note.setSelectionRange(target.start,target.end);
+  renderPromptImageReferences();
+}
 function resolvePromptReference(token, fallback='',displayKind=null) {
-  const match=/^\[\[(object|node|annotation|image|pose|pose_edit|time):(.+)\]\]$/.exec(token);
+  const match=/^\[\[(object|node|annotation|image|pose|pose_edit|time|scene):(.+)\]\]$/.exec(token);
   if(!match) return null;
   const [,kind,key]=match;
   let name=fallback,label=fallback,title=fallback,missing=false;
@@ -4987,14 +5343,19 @@ function resolvePromptReference(token, fallback='',displayKind=null) {
     // Time prose is immutable once inserted; browsing another frame or source
     // must not retarget a saved timestamp or label it as missing.
     name='时间戳';label=fallback;title=fallback;
+  } else if(kind==='scene') {
+    const entry=state.sceneRefs.find(item=>item.id===key);
+    name=entry?.reference.name || '场景';label=entry?sceneReferenceLabel(entry.reference):fallback;
+    title=label;missing=!entry;
   } else if(kind==='image') {
     const entry=state.imageRefs.find(item=>item.id===key);
     label=entry?.label || fallback;name='图';title=label;missing=!entry;
   } else if(kind==='annotation') {
-    const mark=state.annotations.find(item=>item.id===key);
-    name=mark?.name || fallback.split('（')[0] || '标记';label=mark?annotationReferenceLabel(mark):fallback;
+    const matches=state.annotations.filter(item=>item.id===key),mark=matches.length===1?matches[0]:null;
+    const saved=!mark?promptReferenceText.exportRecords().find(entry=>entry.token===token):null;
+    name=mark?.name || saved?.name || fallback.split('（')[0] || '标记';label=mark?annotationReferenceLabel(mark):saved?.label || fallback;
     const snapshot=[...state.sceneSnapshots,...state.dynamicSnapshots].find(item=>item.id===(mark?.frame_id || mark?.snapshot_id));
-    title=[mark?.pane==='reference'?'参考图':'场景截图',snapshot?.name,label,mark?.text].filter(Boolean).join(' · ');missing=!mark;
+    title=saved?.title || [mark?.pane==='reference'?'参考图':'场景截图',snapshot?.name,label,mark?.text].filter(Boolean).join(' · ');missing=!mark;
   } else if(kind==='object') {
     const item=sceneObject(key);name=item?.name || fallback || '物体';label=item?.name || fallback;title='物体 · '+label;missing=!item;
   } else if(kind==='node') {
@@ -5036,6 +5397,14 @@ function previewPromptReference(entry,source={}) {
   id('prompt-reference-title').textContent=entry.alias+' · '+referenceAliasLabel(entry.alias);
   id('prompt-reference-detail').textContent=meta?.title || entry.title || entry.label;
   id('prompt-reference-status').textContent=meta?.missing?'来源已不在当前草稿中，请重新引用或移除。':'';
+  const problem=entry.kind==='annotation'?annotationReferenceProblems().find(item=>item.token===entry.token):null;
+  if(problem) id('prompt-reference-status').textContent=problem.alias+'（'+problem.name+'）'+problem.reason+'。请点卡片右侧 × 移除引用，或恢复对应标记。';
+  const scene=entry.kind==='scene'?state.sceneRefs.find(item=>sceneToken(item.id)===entry.token):null;
+  sceneReferencePreviewImage.hidden=!scene;
+  if(scene) {
+    sceneReferencePreviewImage.src=scene.preview_data_url || resourceURL(scene.reference.source_reference_image.url);
+    id('prompt-reference-status').textContent='引用时的固定快照，仅供参考；不会修改来源场景。';
+  } else sceneReferencePreviewImage.removeAttribute('src');
   const locate=id('prompt-reference-locate');
   const mark=entry.kind==='annotation'?state.annotations.find(item=>`[[annotation:${item.id}]]`===entry.token):null;
   locate.hidden=!mark;locate.onclick=()=>{promptReferencePopover.close();revealAnnotation(mark);};
@@ -5045,18 +5414,25 @@ function renderPromptImageReferences() {
   feedbackEvidence?.refresh();
   ui.imageRefs.replaceChildren();
   const entries=promptReferenceText.entries(ui.note.value);
+  const problems=new Map(annotationReferenceProblems().map(item=>[item.token,item]));
   ui.imageRefs.classList.toggle('hidden',!entries.length);
   for(const entry of entries) {
     const image=entry.kind==='image'?state.imageRefs.find(item=>imageToken(item.id)===entry.token):null;
-    const chip=document.createElement('div');chip.className=image?'prompt-image-chip':'prompt-reference-chip';chip.dataset.referenceToken=entry.token;
-    const preview=document.createElement('button');preview.type='button';preview.className=image?'prompt-image-preview':'prompt-reference-preview';
+    const scene=entry.kind==='scene'?state.sceneRefs.find(item=>sceneToken(item.id)===entry.token):null;
+    const visual=image || scene;
+    const chip=document.createElement('div');chip.className=visual?'prompt-image-chip':'prompt-reference-chip';chip.dataset.referenceToken=entry.token;
+    const problem=problems.get(entry.token);
+    if(problem) {chip.classList.add('is-invalid');chip.dataset.referenceState=problem.reason==='已删除'?'deleted':'duplicate';}
+    if(scene) chip.dataset.sceneRefId=scene.id;
+    const preview=document.createElement('button');preview.type='button';preview.className=visual?'prompt-image-preview':'prompt-reference-preview';
     preview.title=resolvePromptReference(entry.token,entry.label,entry.kind)?.title || entry.title || entry.label;
+    if(problem) preview.title=entry.alias+'（'+problem.name+'）'+problem.reason;
     preview.setAttribute('aria-label',referenceAliasLabel(entry.alias)+' · '+preview.title);
-    if(image) {
-      chip.dataset.imageRefId=image.id;preview.dataset.imageRefId=image.id;
-      const thumbnail=document.createElement('img');thumbnail.src=image.annotated_data_url || image.original_data_url;thumbnail.alt='';preview.append(thumbnail);
+    if(visual) {
+      if(image) {chip.dataset.imageRefId=image.id;preview.dataset.imageRefId=image.id;}
+      const thumbnail=document.createElement('img');thumbnail.src=image?image.annotated_data_url || image.original_data_url:scene.preview_data_url || resourceURL(scene.reference.source_reference_image.url);thumbnail.alt='';preview.append(thumbnail);
     }
-    const label=document.createElement('span');label.className='prompt-reference-alias';label.textContent=entry.alias+(image?' · '+(image.pane==='reference'?'参考':'场景'):'');preview.append(label);
+    const label=document.createElement('span');label.className='prompt-reference-alias';label.textContent=entry.alias+(problem?' · '+problem.reason:image?' · '+(image.pane==='reference'?'参考':'场景'):scene?' · 只读场景':'');preview.append(label);
     preview.addEventListener('click',event=>image?previewPromptImage(image,{anchor:preview,event,entry}):previewPromptReference(entry,{anchor:preview,event,entry}));
     const remove=document.createElement('button');remove.type='button';remove.className=image?'prompt-image-remove':'prompt-reference-remove';
     if(image) remove.dataset.imageRefId=image.id;
@@ -5531,6 +5907,8 @@ function promptReferences(note=promptText()) {
   if (note.length > 10000) throw new Error('提示最多 10000 字，请精简后再发送。');
   if (/\[\[image:/.test(note) && !state.imageReferencesSupported) throw new Error('服务尚不支持图片引用，请更新服务并刷新页面后发送。');
   collectImageReferences(note,state.imageRefs);
+  if(/\[\[scene:/.test(note) && !state.sceneReferencesSupported) throw Error('服务尚不支持场景引用，请更新服务后再发送。');
+  collectSceneReferences(note,state.sceneRefs);
   collectPoseReferences(note,state.poseRefs);
   if (/\[\[pose_edit:/.test(note) && !state.poseCorrectionsSupported) throw new Error('服务尚不支持关键点修正，请更新服务并刷新页面后发送。');
   collectPoseEdits(note,state.poseEdits);
@@ -5540,15 +5918,20 @@ function promptReferences(note=promptText()) {
   for (const match of note.matchAll(/\[\[(?:object|annotation|node):/g)) {
     if (!starts.has(match.index)) throw new Error('提示里有不完整的引用；请重新点击物体或标记旁的「引用」。');
   }
+  const invalid=annotationReferenceProblems(note);
+  if(invalid.length) {
+    const shown=invalid.slice(0,5).map(item=>item.alias+'（'+item.name+'）'+item.reason).join('；');
+    const error=new Error('标记引用失效：'+shown+(invalid.length>5?'；等共 '+invalid.length+' 条':'')+'。请移除对应引用，或恢复标记后再发送。');
+    error.invalidReferences=invalid;
+    throw error;
+  }
   const nodes = [];
   const seenNodes = new Set();
   for (const match of tokens) {
     const [, kind, objectId, path] = match;
     if (kind !== 'node' && path !== undefined) throw new Error('提示里的物体或标记引用格式不正确。');
     if (kind === 'annotation') {
-      if (state.annotations.filter((item) => item.id === objectId).length !== 1) {
-        throw new Error('提示引用的标记已删除或重复，请更新这处引用。');
-      }
+      // All invalid marks are reported together above, with their saved labels.
     } else if (kind === 'object') {
       if (!sceneObject(objectId) && !snapshotForFeedback() && !state.sceneSnapshots.length) {
         throw new Error('提示引用的对象已不在当前场景，请更新这处引用。');
@@ -5586,6 +5969,7 @@ function clearSubmittedPrompt(submission) {
   if (state.poseEditor?.restoreLatest) state.humanOverlayChoice='latest';
   state.poseEdits = []; state.poseEditor=null; state.poseEditDrag=null;
   state.imageRefs = [];
+  state.sceneRefs=[];state.sceneReferenceRound++;
   renderPromptImageReferences();
   return true;
 }
@@ -5599,6 +5983,7 @@ async function clearSubmittedDraft(submission) {
   state.sceneSnapshots = [];
   state.snapshotSequence = 0;
   state.snapshot = null;
+  finishSnapshotPan();state.snapshotViewports.clear();
   state.sceneView = 'live';
   state.selectedId = null;
   state.selectedSceneNode = null;
@@ -5618,10 +6003,12 @@ async function clearSubmittedDraft(submission) {
   // immediate reload cannot recover the old dynamic screenshots.
   await saveMomentDraft.pending;
   await promptImageStore.pending.catch(() => {});
+  await sceneReferenceStore.pending.catch(()=>{});
   return true;
 }
 async function feedbackPayload(referencedSceneNodes, promptText) {
   const imageRefs = collectImageReferences(promptText,state.imageRefs);
+  const sceneRefs=collectSceneReferences(promptText,state.sceneRefs);
   if (imageRefs.length && !state.imageReferencesSupported) throw new Error('服务尚不支持图片引用，请更新服务并刷新页面后发送。');
   const poseEdits=collectPoseEdits(promptText,state.poseEdits);
   if (poseEdits.length && !state.poseCorrectionsSupported) throw new Error('服务尚不支持关键点修正，请更新服务并刷新页面后发送。');
@@ -5648,6 +6035,7 @@ async function feedbackPayload(referencedSceneNodes, promptText) {
     pose_refs:collectPoseReferences(promptText,state.poseRefs),
     pose_edits:poseEdits,
     image_refs:structuredClone(imageRefs),
+    ...(sceneRefs.length?{scene_refs:sceneRefs}:{}),
     referenced_scene_nodes:referencedSceneNodes,
     annotations:state.annotations.map((annotation) => {
       const item = {...annotation};
@@ -5672,8 +6060,12 @@ async function feedbackPayload(referencedSceneNodes, promptText) {
   };
 }
 async function submitFeedback() {
-  if (!state.workspaceReady || !state.sessionId || !Number.isInteger(state.sceneRevision) || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject) return;
+  if(livewire?.active) { announce('请先完成或取消左图的智能轮廓，再发送反馈。',true);return; }
+  if (!state.workspaceReady || !state.sessionId || !Number.isInteger(state.sceneRevision) || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || state.citingSceneProject) return;
   const promptText = promptReferenceText.expand(ui.note.value);
+  if(!state.sceneReferencesSupported && (/\[\[scene:/.test(promptText) || state.pendingSubmission?.payload?.scene_refs?.length)) {
+    announce('服务尚不支持场景引用，请更新服务后再发送；当前草稿已保留。',true);return;
+  }
   if (!state.poseCorrectionsSupported && (/\[\[pose_edit:/.test(promptText) || state.pendingSubmission?.payload?.pose_edits?.length)) {
     announce('服务尚不支持关键点修正，请更新服务并刷新页面后发送。',true); return;
   }
@@ -5683,7 +6075,7 @@ async function submitFeedback() {
   let referencedSceneNodes = [];
   if (!state.pendingSubmission) {
     try { referencedSceneNodes = promptReferences(promptText); }
-    catch (error) { announce(error.message, true); ui.note.focus(); return; }
+    catch (error) { announce(error.message, true); focusInvalidPromptReference(error); return; }
   }
   if (!state.pendingSubmission && !state.annotations.length && !promptText.trim() && !state.references.length && !state.referenceClip) {
     announce('请添加参考图、画标记，或填写提示后再发送。', true);
@@ -5751,7 +6143,7 @@ async function submitFeedback() {
       : state.deliveryMode === 'external' ? 'submitted' : 'queued');
     ui.caption.textContent = draftCleared ? '' : '新草稿已保留，可以继续编辑。';
     saveDraft();
-    if (state.feedbackTransport === 'mcp_events') {
+    if (result.delivery?.feedback_transport==='mcp_events' || delivery.startsWith('event_')) {
       const subscribers=Number.isInteger(result.delivery?.subscriber_count) ? result.delivery.subscriber_count
         : state.eventDelivery?.subscriber_count || 0;
       announce(delivery === 'event_delivered' ? '视觉反馈事件已送达订阅插件；请在插件所在宿主查看后续。'
@@ -5826,7 +6218,7 @@ function pickScene(event) {
 }
 function handleSceneClick(event) {
   const selection = pickScene(event);
-  if (selection) selectObject(selection.objectId, selection.sceneNode, selection.detailNode);
+  if (selection) toggleObjectSelection(selection.objectId, selection.sceneNode, selection.detailNode);
   return selection;
 }
 function sceneClickKey(selection) {
@@ -5894,7 +6286,9 @@ function applyTheme({dark, animate=false}) {
   };
   if (animate) backgroundTransition = {start:performance.now(), from:threeScene.background.clone(), gridFrom:grid.material.color.clone(), ...palette};
   else { backgroundTransition = null; apply(); }
-  if (selectionHelper) selectionHelper.material.color.set(dark ? '#ecece8' : '#292925');
+}
+function renderLiveScene() {
+  selectionOutline.render(threeScene,camera,{enabled:feedbackLayer.visible});
 }
 function animate(timestamp) {
   requestAnimationFrame(animate);
@@ -5908,7 +6302,7 @@ function animate(timestamp) {
   }
   advanceTimeline(timestamp);
   controls.tick(timestamp);
-  if (state.sceneView === 'live') renderer.render(threeScene, camera);
+  if (state.sceneView === 'live') renderLiveScene();
 }
 async function poll() {
   if (!state.sessionId || state.submitting || state.uploading || state.navigatingProject || poll.running) return;
@@ -5943,11 +6337,33 @@ function bindEvents() {
     onTime:id=>quotePromptTime('snapshot',id),
     onRemove:removeSavedSnapshot,resourceURL});
   workspaceControls = setupWorkspaceControls({getState:() => state, onLabelsChange:drawOverlays});
-  workspaceSidebar=setupWorkspaceSidebar({onOpen:loadSidebarProjects,onPage:page=>{if(page==='create') {renderCreateProject();if(!state.models || state.modelLoadError) loadModels({forProjects:true}).catch(()=>{});}}});
+  workspaceFolderImport=setupWorkspaceFolderImport({api,
+    isEnabled:()=>state.workspaceReady && state.projectFolderImportSupported && !state.creatingProject && !state.navigatingProject && !state.unloadingProjectId,
+    onImported:()=>loadProjects(),onError:message=>announce(message,true)});
+  workspaceSidebar=setupWorkspaceSidebar({onOpen:loadSidebarProjects,onPage:page=>{
+    workspaceFolderImport?.onPage(page);
+    if(page==='create') {renderCreateProject();if(!state.models || state.modelLoadError) loadModels({forProjects:true}).catch(()=>{});}
+    if(page==='tasks' && state.taskConnectionSupported) {
+      renderTargetPicker();loadTargets().catch(()=>{});
+      if(state.taskCreationSupported) loadModels().catch(()=>{});
+    }
+  }});
+  ui.openEmptyFolder.addEventListener('click',async()=>{
+    if(ui.openEmptyFolder.disabled) return;
+    await workspaceSidebar.open('import');
+    if(workspaceSidebar.isOpen && workspaceSidebar.page==='import') id('folder-import-path')?.focus({preventScroll:true});
+  });
   minimalLayout = setupMinimalLayout({getState:() => state});
   setupTheme({onChange:applyTheme});
   immersiveWorkspace = setupImmersive({onResize:() => { resizeScene(); updateReferenceGeometry(); }, onLayoutChange:() => workspaceChrome?.layoutChanged(), hasActiveGesture:() => !!(state.drag || annotationReferenceDrag || state.textPending || state.poseEditDrag)});
   workspaceChrome = setupWorkspaceChrome({getState:() => state, setMode, activateToolPane, revealReference:() => immersiveWorkspace.setReference(true)});
+  livewire=setupReferenceLivewire({getImage:()=>ui.referenceImage,canvas:ui.referenceCanvas,
+    getSource:()=>{const ref=activeReference();return ref && {key:JSON.stringify([state.sessionId,ref.id,resourceURL(ref.url),
+      dynamicEnabled()?state.time:null,state.referenceClip?.clip_id || null,state.activeViewId || null])};},
+    enabled:()=>editable() && state.toolPane==='reference' && toolMode('reference')==='livewire' && referencePixelsReady(),
+    begin:()=>{pauseTimeline();return !!activeReference() && (!dynamicEnabled() || !!ensureDynamicMoment());},
+    onCommit:points=>addAnnotation({pane:'reference',type:'freehand',name:'智能轮廓'+((state.annotationNameCounters.livewire||0)+1),coordinates:{...points[0]},points}),
+    onChange:drawOverlays,onError:message=>announce(message,true)});
   setupActionIcons();
   feedbackEvidence = setupFeedbackEvidence({getDraft:feedbackEvidenceData, api, resourceURL});
   bindPromptReferenceEvents();
@@ -6053,6 +6469,42 @@ function bindEvents() {
   });
   ui.referenceStage.addEventListener('pointercancel', () => { state.referencePanning = null; });
   ui.snapshotImage.addEventListener('load', updateSnapshotGeometry);
+  const snapshotControl=event=>event.target.closest('button,summary,input,textarea,select,a,[contenteditable],[data-prompt-drag]');
+  ui.sceneStage.addEventListener('wheel',event=>{
+    if(state.sceneView!=='snapshot' || !state.snapshot || snapshotControl(event)) return;
+    event.preventDefault();event.stopPropagation();
+    if(!event.deltaY || state.drag || annotationReferenceDrag || state.snapshotPanning) return;
+    setSnapshotZoom(snapshotViewport().zoom*(event.deltaY<0?1.15:1/1.15),event);
+  },{passive:false,capture:true});
+  ui.sceneStage.addEventListener('pointerdown',event=>{
+    if(state.sceneView!=='snapshot' || !state.snapshot || state.drag || annotationReferenceDrag || snapshotControl(event)) return;
+    const emptySelection=event.button===0 && toolMode('scene')==='select' && !annotationFromPointer(event,'scene',ui.sceneCanvas);
+    if(!(event.button===1 || event.button===2 || event.button===0 && state.spacePan || emptySelection)) return;
+    event.preventDefault();event.stopPropagation();
+    const previous={...snapshotViewport()};
+    state.snapshotPanning={pointerId:event.pointerId,snapshotId:state.snapshot.id,startX:event.clientX,startY:event.clientY,previous};
+    ui.sceneStage.dataset.snapshotPanning='true';ui.sceneStage.setPointerCapture(event.pointerId);
+  },{capture:true});
+  ui.sceneStage.addEventListener('pointermove',event=>{
+    const gesture=state.snapshotPanning;
+    if(!gesture || event.pointerId!==gesture.pointerId) return;
+    event.preventDefault();event.stopPropagation();
+    if(state.sceneView!=='snapshot' || state.snapshot?.id!==gesture.snapshotId) {finishSnapshotPan(true);return;}
+    const previous=gesture.previous;
+    const width=ui.snapshotMedia.clientWidth*previous.zoom,height=ui.snapshotMedia.clientHeight*previous.zoom;
+    const maxX=(ui.sceneStage.clientWidth+width)/2-Math.min(64,width/5),maxY=(ui.sceneStage.clientHeight+height)/2-Math.min(64,height/5);
+    setSnapshotViewport(gesture.snapshotId,{zoom:previous.zoom,
+      x:clamp(previous.x+event.clientX-gesture.startX,-maxX,maxX),
+      y:clamp(previous.y+event.clientY-gesture.startY,-maxY,maxY)});
+    updateSnapshotTransform();
+  },{capture:true});
+  ui.sceneStage.addEventListener('pointerup',event=>{
+    if(state.snapshotPanning?.pointerId!==event.pointerId) return;
+    event.preventDefault();event.stopPropagation();finishSnapshotPan();
+  },{capture:true});
+  ui.sceneStage.addEventListener('pointercancel',()=>finishSnapshotPan(true));
+  ui.sceneStage.addEventListener('lostpointercapture',()=>finishSnapshotPan(true));
+  ui.sceneStage.addEventListener('contextmenu',event=>{if(state.sceneView==='snapshot' && !snapshotControl(event))event.preventDefault();});
   ui.snapshotCompareImage.addEventListener('load', renderPromptReferenceControls);
   ui.captureScene.addEventListener('click', freezeScene);
   ui.newSceneBadge.addEventListener('click', browseScene);
@@ -6074,6 +6526,7 @@ function bindEvents() {
     canvas.addEventListener('lostpointercapture', () => finishAnnotationReferenceDrag());
     canvas.addEventListener('dblclick',event=>{
       const pane=canvas===ui.referenceCanvas?'reference':'scene';
+      if(pane==='reference' && toolMode(pane)==='livewire') { event.preventDefault();livewire?.finish();return; }
       if(event.button!==0 || !editable() || toolMode(pane)!=='select' || annotationClicks.length!==2 ||
         annotationClicks[0].key!==annotationClicks[1].key || performance.now()-annotationClicks[0].at>1500)return;
       const mark=annotationFromPointer(event,pane);
@@ -6128,6 +6581,7 @@ function bindEvents() {
     if (!ui.clearDialog.open || !clearRequest) return;
     if (!editable()) { ui.clearDialog.close(); return; }
     pauseTimeline(); hideTextEditor(); state.drag = null;
+    livewire?.cancel();
     const before = annotationEditState();
     if (clearRequest.scope === 'round') {
       for (const sample of [...state.poseEdits]) removePoseEdit(sample,{record:false});
@@ -6146,14 +6600,7 @@ function bindEvents() {
   ui.redoAnnotation.addEventListener('click', redoAnnotationEdit);
   ui.referenceAllAnnotations.addEventListener('mousedown', (event) => event.preventDefault());
   ui.referenceAllAnnotations.addEventListener('click', insertAllAnnotationReferences);
-  ui.clearSelection.addEventListener('click', () => {
-    if (!editable()) return;
-    state.selectedId = null;
-    state.selectedSceneNode = null;
-    state.lastPickedDetailNode = null;
-    renderSelection();
-    saveDraft();
-  });
+  ui.clearSelection.addEventListener('click', clearObjectSelection);
   const focusSelection = () => {
     if (!editable()) return;
     browseScene();
@@ -6176,6 +6623,11 @@ function bindEvents() {
     quoteObjectReference(selectedPromptReference());
   });
   document.addEventListener('keydown', (event) => {
+    if(livewire?.active && !event.isComposing && !event.target.closest('input,textarea,select,[contenteditable],dialog[open]')) {
+      if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();livewire.cancel();return;}
+      if(event.key==='Backspace'){event.preventDefault();event.stopImmediatePropagation();livewire.back();return;}
+      if(event.key==='Enter'){event.preventDefault();event.stopImmediatePropagation();livewire.finish();return;}
+    }
     if (event.key.toLowerCase() !== 'f' || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 ||
         event.target.closest('input, textarea, select, [contenteditable], dialog[open]') || document.querySelector('dialog[open], .prompt-reference-popover:not([hidden])') || state.sceneView !== 'live') return;
     event.preventDefault(); focusSelection();
@@ -6194,6 +6646,7 @@ function bindEvents() {
     if (event.key === 'Escape') { event.preventDefault(); hideTextEditor(); }
   });
   renderer.domElement.addEventListener('pointerdown', (event) => {
+    cancelPendingSelectionClear();
     if(event.button!==0 || event.isPrimary===false){pointerDown=null;sceneClicks=[];return;}
     pointerDown = {x:event.clientX, y:event.clientY,id:event.pointerId,maxDistance:0};
   });
@@ -6210,7 +6663,7 @@ function bindEvents() {
       key:selection ? sceneClickKey(selection) : null});
     sceneClicks=sceneClicks.slice(-2);
   });
-  renderer.domElement.addEventListener('pointercancel',()=>{pointerDown=null;sceneClicks=[];});
+  renderer.domElement.addEventListener('pointercancel',()=>{cancelPendingSelectionClear();pointerDown=null;sceneClicks=[];});
   controls.addEventListener('start', () => {
     orbitStart = {position:camera.position.clone(), target:controls.target.clone(), quaternion:camera.quaternion.clone()};
   });
@@ -6242,6 +6695,7 @@ function bindEvents() {
         return;
       }
     }
+    if (event.key === 'Escape' && state.snapshotPanning) { finishSnapshotPan(true);event.preventDefault();return; }
     if (event.key === 'Escape' && annotationReferenceDrag) { finishAnnotationReferenceDrag(); event.preventDefault(); return; }
     if (['Backspace','Delete'].includes(event.key) && !event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey &&
         !event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable=false]), dialog[open]')) {
@@ -6269,7 +6723,7 @@ function bindEvents() {
 
   });
   document.addEventListener('keyup', (event) => { if (event.code === 'Space') state.spacePan = false; });
-  window.addEventListener('blur', () => { finishAnnotationReferenceDrag(); state.spacePan = false; state.referencePanning = null; if (state.drag?.type === 'erase') { state.drag = null; drawOverlays(); } });
+  window.addEventListener('blur', () => { finishAnnotationReferenceDrag();finishSnapshotPan(true);state.spacePan = false; state.referencePanning = null; if (state.drag?.type === 'erase') { state.drag = null; drawOverlays(); } });
   window.addEventListener('beforeunload', saveDraft);
   new ResizeObserver(updateReferenceGeometry).observe(ui.referenceStage);
   new ResizeObserver(resizeScene).observe(ui.sceneStage);
@@ -6300,7 +6754,7 @@ try {
 }
 setInterval(poll, 1500);
 setInterval(() => {
-  if (state.workspaceReady && state.feedbackTransport !== 'mcp_events' && state.deliveryMode === 'external' && state.desktopAvailable && !state.loadingTargets && !state.switchingTarget) {
+  if (state.workspaceReady && state.taskConnectionSupported && (state.boundThreadId || workspaceSidebar?.page==='tasks') && !state.loadingTargets && !state.switchingTarget) {
     loadTargets().catch(() => { /* The picker shows the connection error. */ });
   }
 }, 20000);

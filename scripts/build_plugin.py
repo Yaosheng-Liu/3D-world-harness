@@ -24,9 +24,11 @@ MARKETPLACE_CATALOG_PATHS = (
 FIXED_FILES = (
     "plugin.json", "mcp.json", "LICENSE", "README.md", "README.en.md",
     "README.ja.md", "README.ko.md", "README.ru.md", "CHANGELOG.md", "CONTRIBUTING.md", "preview.png",
-    "docs/mcp-events-plugin.md", "scripts/plugin_bridge.py",
+    "docs/mcp-events-plugin.md", "docs/folder-import.md", "scripts/plugin_bridge.py",
     "scripts/build_plugin.py",
     "scripts/configure_plugin.py",
+    "scripts/start_blank_workbench.py",
+    "scripts/check_workbench_ready.py",
 )
 
 

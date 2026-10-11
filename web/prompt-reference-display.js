@@ -1,6 +1,6 @@
 // Presentation only. The saved note and its model-facing tokens stay intact.
 import {REFERENCE_ICONS,REFERENCE_NAMES,ALIAS_PATTERN,iconAliasParts} from './prompt-reference-icons.js';
-const TOKEN = /\[\[(object|annotation|node|image|pose|pose_edit):([^\]\r\n]{0,256})(?:\]\]|$)/g;
+const TOKEN = /\[\[(object|annotation|node|image|pose|pose_edit|scene):([^\]\r\n]{0,256})(?:\]\]|$)/g;
 const ALIAS = /【([^【】\r\n]{1,64})】[ \t]*$/;
 
 function shortName(value) {
@@ -13,7 +13,7 @@ function shortName(value) {
 function knownLabels(reference) {
   return [reference?.display_label,...(Array.isArray(reference?.display_labels)?reference.display_labels:[]),
     reference?.image?.label,reference?.annotation?.name,reference?.object?.name,
-    reference?.scene_node?.node_name,reference?.label]
+    reference?.scene_node?.node_name,reference?.scene_reference?.name,reference?.label]
     .filter(value=>typeof value==='string' && value.length && !/[\r\n]/.test(value))
     .sort((a,b)=>b.length-a.length);
 }
@@ -36,6 +36,7 @@ function aliasBase(kind,reference) {
   if (kind==='annotation') return {base:shortName(reference?.annotation?.name)||'标记',numbered:!shortName(reference?.annotation?.name)};
   if (kind==='object') return {base:shortName(reference?.object?.name)||'物体',numbered:!shortName(reference?.object?.name)};
   if (kind==='node') return {base:shortName(reference?.scene_node?.node_name)||'部件',numbered:!shortName(reference?.scene_node?.node_name)};
+  if (kind==='scene') return {base:'场景',numbered:true};
   return {base:kind==='pose_edit'?'手部修正':'人体',numbered:true};
 }
 

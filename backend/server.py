@@ -43,6 +43,7 @@ WORKSPACE_QUEUE_ROUTE = re.compile(r"^/api/workspace/queue/([0-9a-f]{32})/confir
 WORKSPACE_APPROVAL_ROUTE = re.compile(r"^/api/workspace/approvals/([0-9a-f]{32})/respond$")
 WORKSPACE_FEEDBACK_ROUTE = re.compile(r"^/api/workspace/feedback/([0-9a-f]{32})$")
 PROJECT_ROUTE = re.compile(r"^/p/([0-9a-f]{32})(/.*)?$")
+PROJECT_UNLOAD_ROUTE = re.compile(r"^/api/projects/([0-9a-f]{32})$")
 POSE_ROUTE = re.compile(r"^/api/workspace/pose/([0-9a-f]{32})$")
 
 
@@ -311,8 +312,35 @@ def _make_server_unlocked(
         def _dispatch(self) -> None:
             self._check_request_origin()
             parsed = urlsplit(self.path)
-            path = self._select_context(unquote(parsed.path))
+            raw_path = unquote(parsed.path)
+            try:
+                path = self._select_context(raw_path)
+            except APIError as exc:
+                # A successful current-scene unload can lose its HTTP response.
+                # Permit only the exact same DELETE with its retained capability;
+                # every other route for an unloaded scene remains inaccessible.
+                prefix = PROJECT_ROUTE.fullmatch(raw_path)
+                target = PROJECT_UNLOAD_ROUTE.fullmatch(prefix.group(2) or "") if prefix else None
+                if (exc.status != 404 or self.command != "DELETE" or not prefix or not target
+                    or prefix.group(1) != target.group(1)):
+                    raise
+                self.context = root_context
+                self.project_prefix = ""
+                if self._needs_lan_access() and not self._has_lan_access():
+                    raise APIError(403, "open a workbench access link first")
+                if not registry.authorize_unload_retry(target.group(1), self.headers.get("X-Workspace-Capability", "")):
+                    raise APIError(403, "this operation requires the unloaded workspace browser capability") from exc
+                return self._send_json(200, registry.unload(target.group(1)))
             query = parse_qs(parsed.query)
+            unload_match = PROJECT_UNLOAD_ROUTE.fullmatch(path)
+            if self.command == "DELETE" and unload_match and unload_match.group(1) == self.context.project_id:
+                # Unload checks and detaches its target atomically. Taking an
+                # operation lease here would prevent unloading the caller itself.
+                return self._dispatch_context(path, query)
+            with registry.operation(self.context):
+                return self._dispatch_context(path, query)
+
+        def _dispatch_context(self, path: str, query: dict[str, list[str]]) -> None:
             if path == "/open":
                 # A local desktop shortcut can restore browser access without
                 # storing a bearer token in a bookmark or chat message.
@@ -363,8 +391,29 @@ def _make_server_unlocked(
             project_root = self.context.project_dir
             if self.command == "GET" and path == "/api/projects":
                 return self._send_json(200, registry.list(self.context.project_id))
+            unload_match = PROJECT_UNLOAD_ROUTE.fullmatch(path)
+            if self.command == "DELETE" and unload_match:
+                self._require_browser_capability()
+                return self._send_json(200, registry.unload(unload_match.group(1)))
+            if self.command == "POST" and path == "/api/projects/folders":
+                self._require_browser_capability()
+                payload = self._read_json()
+                if set(payload) - {"path"}:
+                    raise APIError(400, "folder browsing accepts only path")
+                from ready_import import browse_folders
+                return self._send_json(200, browse_folders(payload.get("path"), default=Path.home()))
+            if self.command == "POST" and path == "/api/projects/import-folder":
+                self._require_browser_capability()
+                return self._send_json(200, registry.import_folder(self._read_json()))
+            if self.command == "POST" and path == "/api/projects/check-folder":
+                self._require_browser_capability()
+                payload = self._read_json()
+                if set(payload) - {"path"}:
+                    raise APIError(400, "ready checking accepts only path")
+                from ready_check import check_ready_folder
+                return self._send_json(200, check_ready_folder(payload.get("path")))
             if self.command == "POST" and path == "/api/projects":
-                if self.context.gateway.feedback_transport == "mcp_events":
+                if feedback_transport == "mcp_events":
                     raise APIError(409, "create a separate event workspace instead of a Codex-bound project")
                 self._require_browser_capability()
                 return self._send_json(201, registry.create(self._read_json()))
@@ -373,6 +422,9 @@ def _make_server_unlocked(
                 return self._send_json(200, {"service": "scene-feedback-harness", "status": "ok", "lan_access": browser_access_mode, "scene_revision": store.scene()["revision"], "workspace_gateway": True, "reference_multiview": True, "scene_snapshots_supported": True, "snapshot_comparison_supported": True, "prompt_time_supported": True, "projects_supported": True, "project_id": self.context.project_id, "project_dir": str(project_root), "data_dir": str(store.data_dir), "delivery_mode": "external" if gateway.external_review else "appserver", "feedback_transport": gateway.feedback_transport})
             if self.command == "GET" and path == "/api/workspace/state":
                 state = gateway.state(include_capability=True, preferred_session_id=query.get("session_id", [None])[0])
+                state["project_folder_import_supported"] = True
+                state["project_ready_check_supported"] = True
+                state["blank_workbench"] = getattr(gateway, "blank_workbench", False) is True
                 state["lan_access"] = browser_access_mode
                 state["browser_url"] = self._browser_url(state["session_id"])
                 return self._send_json(200, state)
@@ -382,6 +434,13 @@ def _make_server_unlocked(
             if self.command == "GET" and path == "/api/workspace/context":
                 workspace = gateway.state()
                 return self._send_json(200, {"project_id": workspace["project_id"], "project_dir": workspace["project_dir"], "session_id": workspace["session_id"], "thread_id": workspace["thread_id"], "delivery_mode": workspace["delivery_mode"], "scene": store.scene(), "reference_images": store.get_session(workspace["session_id"])["reference_images"], "reference_clip": workspace["reference_clip"], "request_feedback": workspace["request_feedback"]})
+            if self.command == "POST" and path == "/api/workspace/scene-references":
+                self._require_browser_capability()
+                return self._send_json(201, registry.capture_scene_reference(self.context, self._read_json()))
+            scene_reference = re.fullmatch(r"/api/workspace/scene-references/([0-9a-f]{32})", path)
+            if self.command == "GET" and scene_reference:
+                from scene_references import SceneReferences
+                return self._send_json(200, SceneReferences(store).get(scene_reference.group(1)))
             if self.command == "GET" and path == "/api/workspace/targets":
                 return self._send_json(200, gateway.list_targets())
             if self.command == "GET" and path == "/api/workspace/models":
@@ -623,6 +682,9 @@ def _make_server_unlocked(
         def do_PUT(self) -> None:
             self._handle()
 
+        def do_DELETE(self) -> None:
+            self._handle()
+
         def log_message(self, format: str, *args: object) -> None:
             message = format % args
             if "?" in self.path:
@@ -650,7 +712,7 @@ def _make_server_unlocked(
                     principal, hashlib.sha256(context.store.control_token.encode()).hexdigest()),
             )
         context.gateway.project_name = context.name
-        context.gateway.desktop_seed_thread_id = (
+        context.gateway.desktop_seed_thread_id = None if getattr(context.gateway, "imported_workspace", False) else (
             (store.state.get("workspace") or {}).get("thread_id") or getattr(gateway.adapter, "thread_id", None)
         )
         context.gateway.thread_config = {"mcp_servers": {"scene_feedback": {
@@ -668,10 +730,18 @@ def _make_server_unlocked(
         if context is root_context and enable_codex and hasattr(context.gateway.adapter, "env_overrides"):
             context.gateway.adapter.env_overrides["SCENE_FEEDBACK_PORT"] = str(server.server_port)
             context.gateway.adapter._thread_config = context.gateway.adapter._project_mcp_config()
+        saved_workspace = context.gateway.ensure()
+        saved_target = saved_workspace.get("thread_id")
+        if external_review and saved_target and context.gateway.feedback_transport == "legacy" and context.gateway.adapter is None:
+            from shared_thread_adapter import SharedDesktopAdapter
+            kwargs = {"allow_owned_resume": True} if saved_target in saved_workspace.get("created_thread_ids", []) else {"allow_bound_resume": True}
+            kwargs.update(context.gateway._owned_adapter_config(saved_target))
+            context.gateway.adapter = SharedDesktopAdapter(saved_target, on_event=context.gateway.scoped_adapter_callback(), **kwargs)
 
     def create_context(record: dict, newly_created: bool) -> ProjectContext:
         child_project = Path(record["project_dir"])
         child_data = Path(record["data_dir"])
+        imported = record.get("kind") == "imported"
         established = record.get("creation_status") == "ready" or any(
             record.get(key) for key in ("session_id", "thread_id", "created_thread_id")
         )
@@ -679,9 +749,14 @@ def _make_server_unlocked(
             not child_project.is_dir() or not (child_data / "state.json").is_file()
         ):
             raise RuntimeError("saved reconstruction project is missing its workspace or state; restore its files")
-        child_project.parent.parent.mkdir(mode=0o700, exist_ok=True)
-        child_project.parent.mkdir(mode=0o700, exist_ok=True)
-        child_project.mkdir(mode=0o700, exist_ok=True)
+        if imported:
+            if not child_project.is_dir():
+                raise RuntimeError("imported instance folder no longer exists")
+            child_data.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        else:
+            child_project.parent.parent.mkdir(mode=0o700, exist_ok=True)
+            child_project.parent.mkdir(mode=0o700, exist_ok=True)
+            child_project.mkdir(mode=0o700, exist_ok=True)
         child_lock = _DataDirLock(child_data)
         child_gateway = None
         try:
@@ -691,18 +766,16 @@ def _make_server_unlocked(
                     child_store.state["scene"]["name"] = record["name"]
                     child_store._save()
             child_gateway = WorkspaceGateway(child_store, child_project, external_review=external_review, feedback_transport=feedback_transport)
+            child_gateway.imported_workspace = imported
             context = ProjectContext(record["project_id"], record["name"], child_store, child_gateway, child_lock)
             configure_context(context)
             child_workspace = child_gateway.ensure()
             if child_workspace["project_id"] != context.project_id:
                 raise RuntimeError("managed project ID does not match its stored workspace")
             target_id = child_workspace.get("thread_id")
-            if external_review and target_id and feedback_transport == "legacy":
-                from shared_thread_adapter import SharedDesktopAdapter
-                kwargs = {"allow_owned_resume": True} if target_id in child_workspace.get("created_thread_ids", []) else {"allow_bound_resume": True}
-                kwargs.update(child_gateway._owned_adapter_config(target_id))
-                child_gateway.adapter = SharedDesktopAdapter(target_id, on_event=child_gateway.scoped_adapter_callback(), **kwargs)
-            if enable_codex and not external_review:
+            if imported and not target_id:
+                child_store.workspace_agent(status="external_idle", error=None)
+            if not imported and enable_codex and not external_review:
                 from appserver_adapter import CodexAppServerAdapter
                 thread_path = child_data / "codex_app_server_thread.json"
                 # Do not silently retry an interrupted thread/start without a persisted ID.

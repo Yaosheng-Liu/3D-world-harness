@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real viewport/list double clicks without a live Codex task."""
+"""Exercise real selection toggles and double clicks without a live Codex task."""
 import argparse
 import json
 from pathlib import Path
@@ -59,8 +59,19 @@ def main():
                 page.evaluate("__dblRefs.setMode('point','reference')")
                 note.fill('开始  后面');note.evaluate('el=>el.setSelectionRange(3,3)');before=evidence();p=point()
                 page.mouse.click(p['x'],p['y']);assert note.input_value()=='开始  后面'
+                assert page.evaluate("__dblRefs.state.selectedId==='fixture_model'")
+                page.wait_for_timeout(600)
+                page.mouse.click(p['x'],p['y'])
+                page.wait_for_function("__dblRefs.state.selectedId===null")
+                assert page.evaluate('__dblRefs.state.selectedSceneNode===null && __dblRefs.state.lastPickedDetailNode===null')
+                assert before==evidence() and note.input_value()=='开始  后面'
+                page.mouse.click(p['x'],p['y'])
+                page.wait_for_timeout(600)
+                print('PASS repeated viewport single-click clears object, node and detail selection without changing evidence',flush=True)
                 page.mouse.dblclick(p['x'],p['y'],delay=70)
-                assert '[[node:fixture_model:0]]' in page.evaluate('__dblRefs.promptText()')
+                page.wait_for_timeout(600)
+                assert page.evaluate("__dblRefs.state.selectedId==='fixture_model'")
+                assert page.evaluate("__dblRefs.promptText().split('[[node:fixture_model:0]]').length-1")==1
                 assert '🧊1' in note.input_value() and '🧩' not in note.input_value()
                 assert note.input_value().startswith('开始') and note.input_value().endswith(' 后面')
                 assert before==evidence() and page.evaluate("__dblRefs.state.paneModes.reference==='point'")
@@ -70,7 +81,13 @@ def main():
                 assert '[[node:fixture_model:0/0]]' in page.evaluate('__dblRefs.promptText()') and before==evidence()
                 assert '🧩1' in note.input_value()
                 assert len(page.evaluate('__dblRefs.state.referencedSceneNodes'))==2
-                print('PASS part double-click cites the hit child instead of the whole GLB',flush=True)
+                page.wait_for_timeout(600)
+                assert page.evaluate('JSON.stringify(__dblRefs.state.selectedSceneNode.node_path)')=='[0,0]'
+                page.mouse.click(p['x'],p['y'])
+                page.wait_for_function('__dblRefs.state.selectedId===null')
+                page.mouse.click(p['x'],p['y'])
+                page.wait_for_timeout(600)
+                print('PASS part double-click keeps the hit child selected; repeated part single-click deselects it',flush=True)
 
                 page.evaluate("document.getElementById('references-dialog').showModal()")
                 page.locator('.selected-name').dblclick()
@@ -78,7 +95,17 @@ def main():
                 page.evaluate("document.getElementById('references-dialog').showModal()")
                 row=page.locator('.object-item[data-object-id=box]');element=row.element_handle();before=evidence()
                 row.click();assert element.evaluate('el=>el.isConnected')
+                page.wait_for_timeout(600)
+                row.click();page.wait_for_function('__dblRefs.state.selectedId===null')
+                row.click();page.wait_for_timeout(600)
+                row.click()
+                page.locator('.object-item[data-object-id=fixture_model]').click()
+                page.wait_for_timeout(600)
+                assert page.evaluate("__dblRefs.state.selectedId==='fixture_model'")
+                row.click();page.wait_for_timeout(600)
                 row.dblclick();assert '[[object:box]]' in page.evaluate('__dblRefs.promptText()') and before==evidence()
+                page.wait_for_timeout(600)
+                assert page.evaluate("__dblRefs.state.selectedId==='box'")
                 assert '🧊2' in note.input_value()
                 print('PASS selected-name and object-list double-click; first selection preserves the clicked row',flush=True)
 

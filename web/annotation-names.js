@@ -1,5 +1,5 @@
 const prefixes = Object.freeze({
-  point:'点', rectangle:'方框', line:'线段', arrow:'箭头', text:'文字', freehand:'笔迹',
+  point:'点', rectangle:'方框', line:'线段', arrow:'箭头', text:'文字', freehand:'笔迹',livewire:'智能轮廓',
   other:'标记'
 });
 const validName = name => typeof name === 'string' && name.trim().length > 0 &&

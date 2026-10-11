@@ -101,6 +101,29 @@ select { min-width: 0; font-size: var(--text-control); }
 .reference-media { position: relative; max-width: 100%; max-height: 100%; flex: none; transform-origin: center center; }
 .reference-media img, .scene-snapshot-media img { display: block; height: 100%; width: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; }
 .reference-media canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.livewire-status { position: absolute; z-index: 7; bottom: 12px; left: 12px; right: 12px; display: flex; justify-content: center; pointer-events: none; }
+.livewire-status-body { display: flex; align-items: center; gap: 8px; width: max-content; max-width: 100%; padding: 4px 5px 4px 10px; border: 1px solid var(--surface-border); border-radius: 18px; color: var(--muted); background: var(--surface-glass); box-shadow: 0 2px 10px #00000006; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); font-size: var(--text-caption); line-height: 20px; pointer-events: auto; }
+.livewire-symbol { position: relative; display: flex; align-items: center; flex: none; width: 14px; height: 14px; }
+.livewire-symbol svg { width: 14px; height: 14px; }
+.livewire-status[data-state="busy"] .livewire-symbol svg { visibility: hidden; }
+.livewire-status[data-state="busy"] .livewire-symbol::after { content: ""; position: absolute; inset: 1px; border: 1.5px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: livewire-progress .8s linear infinite; }
+#livewire-message { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livewire-status .compact-button { flex: none; min-height: 24px; padding: 2px 9px; border-radius: 13px; font-size: var(--text-caption); }
+#livewire-finish { margin-left: 2px; color: var(--ink); background: var(--surface-hover); }
+#livewire-finish:hover:not(:disabled) { border-color: var(--surface-border); }
+.livewire-status .livewire-icon-button { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border-radius: 50%; color: var(--muted); }
+.livewire-status .livewire-icon-button:hover { color: var(--ink); background: var(--surface-hover); }
+.livewire-icon-button svg { width: 14px; height: 14px; pointer-events: none; }
+.livewire-status button:focus-visible { outline-width: 1px; outline-offset: 2px; }
+.livewire-help { display: flex; flex: none; margin-left: -4px; }
+.livewire-help-tip { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 224px; max-width: 100%; padding: 10px 12px; border: 1px solid var(--surface-border); border-radius: 12px; color: var(--muted); background: var(--surface-menu); box-shadow: 0 4px 18px #0000000d; font-size: var(--text-caption); line-height: 20px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s ease, visibility .12s; }
+.livewire-status:has(.livewire-help:hover, .livewire-help:focus-within) > .livewire-help-tip { opacity: 1; visibility: visible; }
+.livewire-help-tip > span { display: block; }
+.livewire-help-tip > span + span { margin-top: 6px; }
+.livewire-shortcuts { font-size: 11px; }
+.livewire-shortcuts kbd { font: 10px var(--font-mono); color: var(--ink); }
+@keyframes livewire-progress { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .livewire-status[data-state="busy"] .livewire-symbol::after { animation: none; } .livewire-help-tip { transition: none; } }
 .reference-media .human-pose-overlay { pointer-events: none; z-index: 2; }
 .reference-media .human-pose-overlay.pose-editing { pointer-events: auto; cursor: crosshair; }
 .pose-edit-panel { flex: none; padding: 8px 0 4px; border-top: 1px solid var(--line); font-size: var(--text-caption); }
@@ -135,7 +158,10 @@ select { min-width: 0; font-size: var(--text-control); }
 /* A frozen image owns the whole stage, including its empty margins. Keep the
    renderer's geometry available for resizing, captures and the live card. */
 .scene-stage[data-scene-view="snapshot"] > .viewport { visibility: hidden; pointer-events: none; }
+/* A focused, enlarged bitmap must not scroll its container and cancel a pan. */
+.scene-stage[data-scene-view="snapshot"] { overflow: clip; }
 .scene-snapshot-media { position: absolute; z-index: 4; left: 50%; top: 50%; transform: translate(-50%,-50%); max-width: 100%; max-height: 100%; background: var(--stage); }
+.scene-stage[data-snapshot-panning="true"], .scene-stage[data-snapshot-panning="true"] .scene-annotations { cursor: grabbing !important; }
 .scene-annotations { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; touch-action: none; }
 .compare-image { position: absolute; inset: 0; height: 100%; width: 100%; object-fit: contain; pointer-events: none; z-index: 3; }
 .stage-hint { position: absolute; z-index: 5; bottom: 14px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); font-size: var(--text-caption); color: #474741; background: #f5f4efdd; padding: 5px 8px; opacity: 0; transition: opacity .15s; white-space: normal; text-align: center; pointer-events: none; }

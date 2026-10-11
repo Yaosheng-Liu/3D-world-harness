@@ -3,11 +3,14 @@
 仓库现在也是一个 Agent Plugins 包：根目录 `plugin.json` 提供身份，
 `mcp.json` 连接项目专用的 MCP，`skills/visual-feedback/` 提供审图流程。
 插件负责参考图、3D 场景、标注、动态机位和外部二维人体结果的查看与引用。
+「打开并导入」会自动检查模型、参考素材、相机与帧时间；失败实例报错，其他有效实例继续导入，有使用限制的实例导入并显示提示。插件内的 [`workbench-ready-check` skill](../skills/workbench-ready-check/SKILL.md) 供 agent 在交付前自查，使用命令行 `scripts/check_workbench_ready.py --json` 获取只读报告，不创建工作台数据或 Codex 任务。仅模型实例与未附相机的参考仍可导入并手动比较，已声明但损坏的素材不能通过。检查范围与限制见[导入前检查](folder-import.md#导入前检查-ready)。
 人体追踪推理与重建位于独立的 [capsule skill](../external-skills/capsule-human-tracking/SKILL.md)，
 不随工作台插件安装。
 默认 skill 使用 WholeBody133。左图工具栏「关键点」可编辑原帧已声明的身体、脚、脸和手部关键点；本轮修改按帧累加为「关键点修改N」卡片，可自动插入提示或用 `@` 引用。原图、修正前后坐标与来源 JSON 随反馈提交；插件仅负责编辑与证据交换，不包含二维推理、三角化或 Blender 重建运行环境。
 
-原生输入框正文和聊天记录使用图标加编号：物体 `🧊1`、部件 `🧩1`、标记 `📍1`、图片 `🖼️1`、人体 `🧍1`、修正 `✏️1`、时间 `🕒1`。圆角来源卡片提供完整来源预览、名称与精确来源详情，并支持移除；各类独立编号，同源复用，旧草稿自动迁移且保持精确绑定。聊天记录显示图标，归档数据仍保存协议 token 与准确的来源、图片、相机、机位、帧时间和场景版本。
+原生输入框正文和聊天记录使用图标加编号：物体 `🧊1`、部件 `🧩1`、标记 `📍1`、图片 `🖼️1`、人体 `🧍1`、修正 `✏️1`、时间 `🕒1`、场景参考 `🏞️1`。圆角来源卡片提供完整来源预览、名称与精确来源详情，并支持移除；各类独立编号，同源复用，旧草稿自动迁移且保持精确绑定。聊天记录显示图标，归档数据仍保存协议 token 与准确的来源、图片、相机、机位、帧时间和场景版本。
+
+左侧场景行的引用按钮可只读捕获同一工作台已加载的其他可用场景，保留版本、场景 JSON、完整 GLB 副本、可用模型预览与首张 GT 图，显示为 `🏞️1`。模型预览在后台生成；服务确认未变的同一快照可在新一轮或刷新后复用已有预览。预览不可用时可使用已有 GT，二者都不可用则明确报错，不加入引用。不改变当前任务绑定，不启动来源任务，也不复制其会话文字或凭证；来源更新或卸载后，引用副本仍可用。场景引用通过 `scene_refs` 与 `[[scene:id]]` 绑定，模型摘要只说明名称、版本与归档路径并提供预览／GT，完整几何按需读取。每轮最多 4 个场景，GLB 复制预算为单场景 200 MiB、单反馈 400 MiB。只在当前工作台内选场景，`@` 候选范围保持原样，详见[场景参考说明](folder-import.md#引用其他场景作为参考)。
 
 模型收到的文本使用简洁摘要，保留原用户文字、ID、来源精确时间、机位、`frame_index` 和版本，来源元数据只说明一次。关键点摘要只列改动关节的修改前／后值；完整关键点、相机矩阵和旧证据仍保存在 `state.json` 与原始修正档案中。MCP 首段文本与 `structuredContent` 默认都返回同一精简摘要，保留 `feedback_id`、完整 `state_path` 和来源归档指针。`workspace_get_feedback(feedback_id, include_details=False)` 默认读取摘要；传入 `include_details=True` 按需读取完整归档字段。两种方式的图片都只包含本轮相关来源，其他原图可按归档路径读取；stdio 与 Events RPC 使用同一参数。
 
@@ -40,7 +43,7 @@ ChatGPT 连接。配置中的项目 ID、项目目录和数据目录必须匹配
 保留完整 MCP、技能、详细介绍、图标，以及 `.codex-plugin/plugin.json` 和
 `.mcp.json` 兼容文件。仓库及配置出的本地安装目录仍可使用本地市场清单。
 
-请使用 `0.1.48` ZIP。如果界面只提示「无法添加插件」，应保留具体校验错误或
+请使用 `0.1.64` ZIP。如果界面只提示「无法添加插件」，应保留具体校验错误或
 上传请求的响应；本地 `plugin/read` 成功不能代替云端归档导入验证。
 官方 [包结构说明](https://developers.openai.com/plugins/build/plugins) 区分了
 单插件分发包和本地市场目录；[上传错误说明](https://developers.openai.com/plugins/deploy/submission-errors)
@@ -96,6 +99,8 @@ codex plugin add scene-feedback-harness@scene-feedback-local
 
 ```bash
 python3 scripts/build_plugin.py --output dist/scene-feedback-harness.zip
+# 带版本号的本次分发包：
+python3 scripts/build_plugin.py --output dist/scene-feedback-harness-0.1.64.zip
 # 或打包已配置的本地版本：
 python3 scripts/build_plugin.py --source dist/local-plugin --output dist/project-plugin.zip
 ```
@@ -118,8 +123,11 @@ ZIP 内只有一个 `scene-feedback-harness/` 目录，包含插件身份、技�
   --data-dir /absolute/path/to/new-events-data
 ```
 
-`--mcp-events` 使用外部审图模式并关闭原有 Codex adapter；默认启动方式继续使用
-原投递方式。现有队列不会自动迁移。需要局域网访问时可沿用 README 的监听地址与公开地址配置：
+`--mcp-events` 使用外部审图模式，初始不创建 Codex adapter 或任务；新导入场景默认通过事件订阅投递。选中导入场景后可打开「任务」，明确连接服务主机同用户的现有 Codex Desktop 任务，或为当前场景新建会话。服务会发现唯一本机 Desktop 连接，不要求先绑定一个种子任务；失败时保留场景并显示原因。协议背景见 [Codex App Server](https://learn.chatgpt.com/docs/app-server)。
+
+连接成功后，这个场景保存直接投递路线与原 Events 来源，后续图文反馈只送入所选对话；Events 工具及历史仍可读取。已有事件与 outbox 不因连接而重新回放或转送，新反馈不会双重投递；其他场景不受影响。模型、参考图、相机、标记与草稿保留，绑定在重启及卸载后重新导入时恢复。空白首页只作入口，须先选择导入场景；Events 服务的「新建场景」页仍未启用。
+
+默认启动方式继续使用原投递方式，现有队列不会自动迁移。需要局域网访问时可沿用 README 的监听地址与公开地址配置：
 `--lan-access open` 可直接访问，默认 `link` 模式使用授权链接。浏览器 LAN 模式不改变 MCP 认证；
 云端 MCP 入口仍需公共 HTTPS。
 

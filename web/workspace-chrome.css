@@ -417,6 +417,15 @@
 #annotation-tool-panel.is-compact .annotation-history-tools .compact-button > span:last-child { display: none; }
 #annotation-tool-panel.is-compact .annotation-history-tools .compact-button { min-height: 30px; padding: 3px 5px; }
 #annotation-tool-panel.is-compact #more-tools > summary { min-height: 30px; padding: 4px 6px; }
+#annotation-tool-panel[data-placement=right] { flex-direction: column; flex-wrap: nowrap; padding: 34px 6px 6px; gap: 4px; }
+#annotation-tool-panel[data-placement=right] .annotation-dock-heading { left: 6px; right: 6px; top: 5px; display: flex; justify-content: center; }
+#annotation-tool-panel[data-placement=right] #annotation-tools-close { height: 24px; }
+#annotation-tool-panel[data-placement=right] .tool-list { flex-direction: column; flex-wrap: nowrap; align-items: stretch; width: 100%; }
+#annotation-tool-panel[data-placement=right] .tool-list > .tool-button { width: 100%; }
+#annotation-tool-panel[data-placement=right] .annotation-history-tools { flex-direction: column; width: 100%; padding: 4px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+#annotation-tool-panel[data-placement=right] .annotation-history-tools .compact-button { width: 100%; white-space: nowrap; }
+#annotation-tool-panel[data-placement=right] #scene-labels-toggle { width: 100%; border-left: 0; border-top: 1px solid var(--line); }
+#annotation-tool-panel[data-placement=right] .popover-content { top: 0; right: calc(100% + 10px); }
 @media (hover: none) { #drag-scene-image { opacity: 1; } }
 @media (prefers-reduced-transparency: reduce) {
   #annotation-tool-panel, #workspace-menu > .popover-content,

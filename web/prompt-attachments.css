@@ -43,6 +43,8 @@
 .prompt-reference-alias { font-size: 13px; line-height: 1.4; }
 .prompt-reference-remove { min-width: 26px; align-self: stretch; border-radius: 0 999px 999px 0; color: var(--muted); padding: 0 6px; }
 .prompt-reference-preview:hover,.prompt-reference-remove:hover { background: var(--surface-hover); }
+.prompt-reference-chip.is-invalid { border-color: #b87266; }
+.prompt-reference-chip.is-invalid .prompt-reference-alias { color: #923f32; }
 .prompt-reference-dialog { width: min(420px,calc(100vw - 32px)); }
 .prompt-reference-dialog p { line-height: 1.75; overflow-wrap: anywhere; font-size: 13px; }
 #prompt-reference-status { color: var(--muted); }

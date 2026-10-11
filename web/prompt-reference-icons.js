@@ -1,7 +1,7 @@
 // Shared visual labels. Exact source identities remain in the reference registry.
-export const REFERENCE_ICONS = Object.freeze({object:'🧊',node:'🧩',annotation:'📍',image:'🖼️',pose:'🧍',pose_edit:'✏️',time:'🕒'});
-export const REFERENCE_NAMES = Object.freeze({object:'物体',node:'部件',annotation:'标记',image:'图片',pose:'人体',pose_edit:'修正',time:'时间戳'});
-export const ALIAS_PATTERN = '【[^【】\\r\\n]{1,128}】|(?:🧊|🧩|📍|🖼️|🧍|✏️|🕒)[1-9]\\d{0,6}(?!\\d)';
+export const REFERENCE_ICONS = Object.freeze({object:'🧊',node:'🧩',annotation:'📍',image:'🖼️',pose:'🧍',pose_edit:'✏️',time:'🕒',scene:'🏞️'});
+export const REFERENCE_NAMES = Object.freeze({object:'物体',node:'部件',annotation:'标记',image:'图片',pose:'人体',pose_edit:'修正',time:'时间戳',scene:'场景'});
+export const ALIAS_PATTERN = '【[^【】\\r\\n]{1,128}】|(?:🧊|🧩|📍|🖼️|🧍|✏️|🕒|🏞️)[1-9]\\d{0,6}(?!\\d)';
 export const ALIAS_AT_END = new RegExp('('+ALIAS_PATTERN+')[ \\t]+$','u');
 
 export function iconAliasParts(alias) {

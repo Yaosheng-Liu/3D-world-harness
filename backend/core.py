@@ -22,11 +22,11 @@ from typing import Any
 
 ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 INLINE_REFERENCE_RE = re.compile(
-    r"\[\[(?:(?P<simple_kind>object|annotation|image):(?P<simple_id>[A-Za-z0-9_-]{1,64})"
+    r"\[\[(?:(?P<simple_kind>object|annotation|image|scene):(?P<simple_id>[A-Za-z0-9_-]{1,64})"
     r"|node:(?P<node_object>[A-Za-z][A-Za-z0-9_-]{0,63}):"
     r"(?P<node_path>[0-9]{1,5}(?:/[0-9]{1,5}){0,31}))\]\]"
 )
-INLINE_REFERENCE_START_RE = re.compile(r"\[\[(?:object|annotation|node|image):")
+INLINE_REFERENCE_START_RE = re.compile(r"\[\[(?:object|annotation|node|image|scene):")
 CLIENT_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 ASSET_RE = re.compile(r"^/assets/[0-9a-f]{32}\.glb$")
 COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -1091,14 +1091,17 @@ class SceneStore:
     def _inline_references(note: str, scene_objects: dict[str, dict[str, Any]],
                            object_ids: set[str], annotations: list[dict[str, Any]],
                            referenced_scene_nodes: list[dict[str, Any]],
-                           *, stale_snapshot: bool, image_refs: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+                           *, stale_snapshot: bool, image_refs: list[dict[str, Any]] | None = None,
+                           scene_refs: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
         """Resolve tokens in the user's prose against this frozen submission."""
         matches = list(INLINE_REFERENCE_RE.finditer(note))
         matched_starts = {match.start() for match in matches}
         if any(match.start() not in matched_starts for match in INLINE_REFERENCE_START_RE.finditer(note)):
-            raise APIError(400, "invalid inline reference; use object, annotation, node or image tokens")
+            raise APIError(400, "invalid inline reference; use object, annotation, node, image or scene tokens")
         images_by_id = {item["id"]: item for item in image_refs or []}
         used_images: set[str] = set()
+        scenes_by_id = {item["id"]: item for item in scene_refs or []}
+        used_scenes: set[str] = set()
         annotations_by_id: dict[str, list[dict[str, Any]]] = {}
         for annotation in annotations:
             annotation_id = annotation.get("id")
@@ -1141,6 +1144,12 @@ class SceneStore:
                     raise APIError(400, f"inline image reference {reference_id} has no submitted frozen image")
                 used_images.add(reference_id)
                 entry["image"] = copy.deepcopy(images_by_id[reference_id])
+            elif kind == "scene":
+                if reference_id not in scenes_by_id:
+                    raise APIError(400, f"inline scene reference {reference_id} has no archived scene")
+                used_scenes.add(reference_id)
+                reference = scenes_by_id[reference_id]
+                entry["scene_reference"] = {key: reference[key] for key in ("id", "name", "source_project_id", "source_scene_revision", "read_only", "snapshot_json_path")}
             else:
                 node_object = match.group("node_object")
                 node_path_text = match.group("node_path")
@@ -1158,6 +1167,8 @@ class SceneStore:
             raise APIError(400, "referenced_scene_nodes contains a node not cited in note")
         if used_images != set(images_by_id):
             raise APIError(400, "image_refs contains an image not cited in note")
+        if used_scenes != set(scenes_by_id):
+            raise APIError(400, "scene_refs contains a scene not cited in note")
         return resolved
 
     def submit_feedback(self, session_id: str, payload: Any) -> dict[str, Any]:
@@ -1259,10 +1270,13 @@ class SceneStore:
             if not isinstance(note, str) or len(note) > 10_000:
                 raise APIError(400, "note must be text up to 10000 characters")
             prepared_images = self._prepare_image_refs(session, payload)
+            from scene_references import prepare_scene_refs, publish_scene_refs
+            prepared_scene_refs = prepare_scene_refs(self, session_id, payload, note)
             inline_references = self._inline_references(
                 note, scene_objects, object_ids, normalized_annotations, referenced_scene_nodes,
                 stale_snapshot=stale_snapshot,
                 image_refs=[item["image"] for item in prepared_images],
+                scene_refs=[item["reference"] for item in prepared_scene_refs],
             )
             object_prompts = payload.get("object_prompts", [])
             if not isinstance(object_prompts, list) or len(object_prompts) > 24:
@@ -1339,6 +1353,8 @@ class SceneStore:
                     raise APIError(400, "scene crop cannot name a reference image")
                 prepared_crops.append((crop["source"], ref_id, self._decode_image_data_url(crop.get("data_url"))))
             feedback = {"feedback_id": uuid.uuid4().hex, "session_id": session_id, "scene_revision": revision, "submitted_at": _now(), "annotations": normalized_annotations, "note": note, "inline_references": inline_references, "object_prompts": normalized_prompts, "reference_images": copy.deepcopy(session.get("reference_images", [])), "selected_object_ids": selected_ids, "selected_scene_nodes": selected_scene_nodes, "referenced_scene_nodes": referenced_scene_nodes}
+            if prepared_scene_refs:
+                feedback["scene_refs"] = publish_scene_refs(self, prepared_scene_refs)
             if prepared_images:
                 feedback["image_refs"] = [{**item["image"], **{name + "_url": self._write_media(data) for name, data in item["images"].items()}} for item in prepared_images]
                 saved_images = {item["id"]: item for item in feedback["image_refs"]}

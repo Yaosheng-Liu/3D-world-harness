@@ -66,6 +66,8 @@
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
+#prompt-scene-reference-preview { display: block; width: 100%; max-height: 150px; object-fit: contain; border-radius: 7px; margin: 4px 0 8px; }
+#prompt-scene-reference-preview[hidden] { display: none !important; }
 #prompt-reference-status:not(:empty) { margin-top: 7px; }
 #prompt-reference-dialog #prompt-reference-locate,
 #prompt-image-preview-dialog #prompt-image-preview-toggle {

@@ -1,0 +1,42 @@
+/* An empty workspace keeps the existing sidebar and theme controls available. */
+.workspace:has(> .workspace-empty:not([hidden])) { position: relative; }
+.workspace-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background: var(--paper);
+}
+.workspace-empty[hidden] { display: none; }
+.workspace-empty-content { max-width: 400px; text-align: center; }
+.workspace-empty-content > svg { color: var(--muted); margin-bottom: 15px; }
+.workspace-empty h1 { margin: 0; color: var(--ink); font-size: 23px; font-weight: 500; letter-spacing: -.02em; }
+.workspace-empty p { margin: 12px 0 25px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.workspace-empty-open-folder {
+  min-height: 40px;
+  border: 1px solid var(--ink);
+  border-radius: 9px;
+  padding: 9px 20px;
+  background: var(--ink);
+  color: var(--paper);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity .15s ease;
+}
+.workspace-empty-open-folder:hover { opacity: .82; }
+.workspace-empty-open-folder:disabled { opacity: .4; cursor: default; }
+.workspace-empty-open-folder:focus-visible { outline: 2px solid var(--muted); outline-offset: 4px; }
+.workspace-is-empty .workspace > :not(.workspace-empty) { visibility: hidden; pointer-events: none; }
+.workspace-is-empty #chat-dock,
+.workspace-is-empty #chat-launcher,
+.workspace-is-empty #annotation-tool-panel,
+.workspace-is-empty #scene-toolbar-toggle { display: none !important; }
+[data-layout="immersive"] .workspace-empty { position: fixed; inset: 64px 0 0; }
+@media (max-width: 640px) {
+  .workspace-is-empty .workspace { min-height: calc(100dvh - 80px); }
+  .workspace-empty h1 { font-size: 21px; }
+}
+@media (prefers-reduced-motion: reduce) { .workspace-empty-open-folder { transition: none; } }

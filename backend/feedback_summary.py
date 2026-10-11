@@ -196,6 +196,24 @@ def image_caption(image: dict[str, Any]) -> str:
                      for item in [image, *image.get("aliases", [])])
 
 
+def _scene_reference_summary(value: dict[str, Any], key: str, index: int) -> dict[str, Any]:
+    result = {"key": key, "archive": f"scene_refs[{index}]",
+              **_fields(value, ("id", "name", "source_project_id", "source_scene_revision", "read_only",
+                               "snapshot_json_path", "archive_path", "source_project_dir", "source_blend_path", "time_sec"))}
+    result["token"] = f"[[scene:{value['id']}]]"
+    result["usage"] = "只读类比；仅编辑当前项目，勿修改来源场景。"
+    assets = value.get("assets", [])
+    result["glb_paths"] = [asset["path"] for asset in assets[:8]]
+    result["asset_count"] = len(assets)
+    if len(assets) > 8:
+        result["additional_assets"] = "snapshot_json_path → assets"
+    if value.get("preview_camera"):
+        result["preview_camera"] = {"archive": f"scene_refs[{index}].preview_camera"}
+    if value.get("source_reference_image"):
+        result["source_reference_image"] = _fields(value["source_reference_image"], ("name", "view_id", "view_name", "time_sec", "frame_index"))
+    return result
+
+
 _BOUND_FIELDS = (
     "id", "name", "label", "pane", "reference_id", "reference_frame_id",
     "static_reference_id", "reference_image_id", "frame_id", "snapshot_id",
@@ -289,6 +307,8 @@ def model_input_plan(feedback: dict[str, Any], data_dir: Path) -> dict[str, Any]
     note = feedback.get("note", "")
     cited_images = set(re.findall(r"\[\[image:([A-Za-z0-9_-]{1,64})\]\]", note))
     cited_images.update(item.get("id") for item in references if item.get("kind") == "image")
+    cited_scenes = set(re.findall(r"\[\[scene:([0-9a-f]{32})\]\]", note))
+    cited_scenes.update(item.get("id") for item in references if item.get("kind") == "scene")
     cited_poses = set(re.findall(r"\[\[pose:([0-9a-f]{32}):([0-9a-f]{32})\]\]", note))
     cited_edits = set(re.findall(r"\[\[pose_edit:([0-9a-f]{32})\]\]", note))
     cited_objects = {item.get("id") for item in references if item.get("kind") == "object"}
@@ -298,7 +318,7 @@ def model_input_plan(feedback: dict[str, Any], data_dir: Path) -> dict[str, Any]
     selected: dict[str, list[tuple[str, int, dict[str, Any]]]] = {}
     for field, prefix in (("reference_images", "R"), ("scene_snapshots", "S"),
                           ("dynamic_frames", "F"), ("image_refs", "I"),
-                          ("human_pose", "P"), ("human_pose_edits", "E")):
+                          ("human_pose", "P"), ("human_pose_edits", "E"), ("scene_refs", "C")):
         selected[field] = []
         for index, value in enumerate(feedback.get(field, [])):
             key = f"{prefix}{index + 1}"
@@ -308,7 +328,9 @@ def model_input_plan(feedback: dict[str, Any], data_dir: Path) -> dict[str, Any]
                 selected[field].append((key, index, value))
             elif prefix == "E" and value.get("id") in cited_edits:
                 selected[field].append((key, index, value))
-    independent_only = (any(selected[field] for field in ("image_refs", "human_pose", "human_pose_edits"))
+            elif prefix == "C" and value.get("id") in cited_scenes:
+                selected[field].append((key, index, value))
+    independent_only = (any(selected[field] for field in ("image_refs", "human_pose", "human_pose_edits", "scene_refs"))
                         and not marks and not cited_objects and not cited_nodes
                         and not feedback.get("crops")
                         and not feedback.get("selected_object_ids") and not feedback.get("selected_scene_nodes"))
@@ -424,6 +446,8 @@ def model_input_plan(feedback: dict[str, Any], data_dir: Path) -> dict[str, Any]
                 summary = copy.deepcopy(archive[field][index])
                 summary["archive"] = path
                 summary["frame"] = _short_source(value.get("frame", {}), key, f"{path}.frame")
+            elif field == "scene_refs":
+                summary = _scene_reference_summary(value, key, index)
             else:
                 summary = _short_source(value, key, path)
                 if field == "image_refs":
@@ -492,6 +516,9 @@ def model_input_plan(feedback: dict[str, Any], data_dir: Path) -> dict[str, Any]
             add(key, "人体来源原帧", value.get("reference_original_url"))
             role = "人工修正（橙色）" if field == "human_pose_edits" else "三维投影（青色）" if value.get("evidence_kind") == "projected_3d" else "二维关节（青色）"
             add(key, role, value.get("pose_overlay_url"))
+    for key, _, value in selected["scene_refs"]:
+        add(key, "相似场景预览（只读）", value.get("preview_url"))
+        add(key, "相似场景参考原图（只读）", value.get("source_reference_image", {}).get("url"))
     for field, group in (("scene_snapshots", "S"), ("dynamic_frames", "F")):
         for key, _, value in selected[field]:
             if group == "F":

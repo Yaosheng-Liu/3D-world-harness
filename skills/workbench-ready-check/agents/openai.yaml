@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workbench Ready Check"
+  short_description: "Check prepared scenes before workbench import"
+  default_prompt: "Use $workbench-ready-check to check this scene folder before delivery."

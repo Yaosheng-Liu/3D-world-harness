@@ -133,6 +133,22 @@ export function setupChatDock({getState}) {
     return {left:left+10,top:top+24,right:left+(viewport?.width || innerWidth)-10,
       bottom:top+(viewport?.height || innerHeight)-12};
   }
+  function positionedBounds() {
+    // Keep the drag header reachable while allowing a little of each edge offscreen.
+    const viewport=viewportBounds(),width=dock.offsetWidth,height=dock.offsetHeight;
+    const headerHeight=Math.min(height,moveHandle?.offsetHeight || 32);
+    const headerVisible=Math.min(24,headerHeight);
+    const horizontal=Math.min(160,width*.25);
+    const bottom=Math.min(96,height*.25);
+    const top=Math.min(16,Math.max(0,headerHeight-headerVisible));
+    return {
+      left:viewport.left-10-horizontal,right:viewport.right+10-width+horizontal,
+      top:viewport.top-24-top,
+      bottom:Math.min(viewport.bottom+12+bottom-height,viewport.bottom+12-headerVisible),
+      // Moving lower must not shrink the input or the saved history height.
+      maxHeight:Math.max(1,viewport.bottom-viewport.top)
+    };
+  }
   function applyPosition() {
     if (!dock) return;
     const preferred=customPosition();
@@ -142,11 +158,11 @@ export function setupChatDock({getState}) {
       return;
     }
     if (collapsed && dock.classList.contains('hidden')) return;
-    const bounds=viewportBounds(),width=dock.offsetWidth,height=dock.offsetHeight;
-    const left=Math.max(bounds.left,Math.min(bounds.right-width,preferred.left));
-    const top=Math.max(bounds.top,Math.min(bounds.bottom-height,preferred.top));
+    const bounds=positionedBounds();
+    const left=Math.max(bounds.left,Math.min(bounds.right,preferred.left));
+    const top=Math.max(bounds.top,Math.min(bounds.bottom,preferred.top));
     for(const [property,value] of Object.entries({'--chat-left':left,'--chat-top':top,
-      '--chat-position-max-height':Math.max(1,bounds.bottom-top)})) {
+      '--chat-position-max-height':bounds.maxHeight})) {
       const pixels=Math.round(value)+'px';
       if(dock.style.getPropertyValue(property)!==pixels) dock.style.setProperty(property,pixels);
     }
@@ -231,9 +247,9 @@ export function setupChatDock({getState}) {
     const top = viewport?.offsetTop || 0;
     const bottom = Math.min(rect.bottom, top + (viewport?.height || window.innerHeight));
     const cssMaximum = parseFloat(getComputedStyle(dock).maxHeight);
-    const custom=customPosition(),bounds=viewportBounds();
-    const available=custom ? (bottomAnchor === null ? bounds.bottom-Math.max(bounds.top,rect.top)
-      : Math.min(bounds.bottom,bottomAnchor)-bounds.top) : bottom-top-12;
+    const custom=customPosition(),bounds=custom ? positionedBounds() : null;
+    const available=custom ? (bottomAnchor === null ? bounds.maxHeight
+      : Math.min(bounds.maxHeight,bottomAnchor-bounds.top)) : bottom-top-12;
     const maximum = Math.max(1, Math.floor(Math.min(available,
       !custom && Number.isFinite(cssMaximum) ? cssMaximum : Infinity)));
     // Everything outside history (header, input, actions and spacing) keeps its

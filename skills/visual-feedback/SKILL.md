@@ -43,3 +43,8 @@ available. This plugin only exports reference-source snapshots, imports bound
 the project, session, view, frame, time and actual images. Preserve that binding;
 do not rename a foreign result to fit the current workspace. Distinguish measured
 or inferred 2D observations from projections of an existing 3D model.
+
+When preparing a scene folder for workbench import, use this plugin's
+`workbench-ready-check` skill before delivery. Folder import runs the same
+validator automatically; inspect per-instance failures and warnings rather
+than treating a ready marker or file existence as proof the package is valid.

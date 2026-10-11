@@ -16,7 +16,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -225,12 +225,20 @@ class PluginRPCTests(unittest.TestCase):
         self.wait_for_delivery(saved["feedback_id"])
         self.assertEqual(self.gateway.state()["queue"][0]["status"], "event_delivered")
 
-    def test_event_mode_refuses_task_binding_and_preserves_legacy_workspace(self):
-        for function, args in [(self.gateway.create_target, ("model",)), (self.gateway.switch_target, ("task",)),
-                               (self.gateway.list_targets, ()), (self.gateway.list_models, ())]:
+    def test_explicit_event_task_choices_keep_default_route_and_preserve_legacy_workspace(self):
+        for function, args in [(self.gateway.create_target, ("",)), (self.gateway.switch_target, ("task",))]:
             with self.assertRaises(APIError) as caught:
                 function(*args)
-            self.assertEqual(caught.exception.status, 409)
+            self.assertEqual(caught.exception.status, 400)
+        bridge = Mock()
+        bridge.list_models.return_value = []
+        with patch("gateway.SharedThreadBridge.discover_loaded_threads", return_value=[]), \
+             patch("gateway.SharedThreadBridge.connect_to_desktop", return_value=bridge):
+            self.assertEqual(self.gateway.list_targets()["targets"], [])
+            self.assertEqual(self.gateway.list_models()["models"], [])
+        self.assertIsNone(self.gateway.adapter)
+        self.assertIsNone(self.gateway.state()["thread_id"])
+        self.assertEqual(self.gateway.feedback_transport, "mcp_events")
         legacy_store = SceneStore(self.root / "legacy-data")
         legacy = WorkspaceGateway(legacy_store, self.project, external_review=True)
         legacy.ensure()

@@ -1,9 +1,9 @@
 // Keep editable prose in a native textarea while preserving exact source tokens
 // outside it. Only registered, complete aliases are expanded for submission.
 import {REFERENCE_ICONS,ALIAS_PATTERN,ALIAS_AT_END,iconAliasParts} from './prompt-reference-icons.js';
-const TOKEN_SCAN = /\[\[(?:object|node|annotation|image|pose|pose_edit|time):[^\[\]\r\n]{1,512}\]\]/g;
+const TOKEN_SCAN = /\[\[(?:object|node|annotation|image|pose|pose_edit|time|scene):[^\[\]\r\n]{1,512}\]\]/g;
 const ALIAS_SCAN = new RegExp(ALIAS_PATTERN,'gu');
-const DEFAULT_NAMES = {object:'物体',node:'部件',annotation:'标记',image:'图片',pose:'人体',pose_edit:'修正',time:'时间戳'};
+const DEFAULT_NAMES = {object:'物体',node:'部件',annotation:'标记',image:'图片',pose:'人体',pose_edit:'修正',time:'时间戳',scene:'场景'};
 const NUMBERED_NAMES = {...DEFAULT_NAMES};
 const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined,{granularity:'grapheme'}) : null;
 const characters = (value) => segmenter ? [...segmenter.segment(value)].map(item=>item.segment) : Array.from(value);
@@ -14,6 +14,7 @@ function tokenKind(token) {
   if (/^\[\[node:[A-Za-z0-9_-]{1,64}:\d+(?:\/\d+)*\]\]$/.test(token)) return 'node';
   if (/^\[\[pose:[0-9a-f]{32}:[0-9a-f]{32}\]\]$/.test(token)) return 'pose';
   if (/^\[\[pose_edit:[0-9a-f]{32}\]\]$/.test(token)) return 'pose_edit';
+  if (/^\[\[scene:[0-9a-f]{32}\]\]$/.test(token)) return 'scene';
   if (/^\[\[time:t[1-9]\d{0,6}\]\]$/.test(token)) return 'time';
   return null;
 }
