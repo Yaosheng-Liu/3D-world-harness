@@ -16,6 +16,8 @@ import test_projects
 
 CATALOG = [{"model": "fixture-vision", "displayName": "CLI 测试模型", "inputModalities": ["text", "image"],
             "supportedReasoningEfforts": [{"reasoningEffort": "high"}], "defaultReasoningEffort": "high", "isDefault": True},
+           {"model": "alternate-vision", "displayName": "另一视觉模型", "inputModalities": ["text", "image"],
+            "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}], "defaultReasoningEffort": "low"},
            {"model": "text-only", "inputModalities": ["text"]}]
 
 
@@ -69,7 +71,7 @@ class CLIProjectTests(unittest.TestCase):
         self.assertFalse(root.gateway.state()['desktop_available'])
         status, models, _ = self.request('GET', '/api/workspace/models')
         self.assertEqual(status, 200)
-        self.assertEqual([m['model'] for m in models['models']], ['fixture-vision'])
+        self.assertEqual([m['model'] for m in models['models']], ['fixture-vision', 'alternate-vision'])
         before = root.store.state_path.read_bytes()
         payload = self.payload()
         status, result, _ = self.create(payload)
@@ -106,9 +108,82 @@ class CLIProjectTests(unittest.TestCase):
         self.assertEqual(env['SCENE_FEEDBACK_PROJECT_DIR'], str(child.project_dir))
         self.assertEqual(env['SCENE_FEEDBACK_DATA_DIR'], str(child.store.data_dir))
 
+    def test_change_model_preserves_thread_and_survives_restart(self):
+        _, result, _ = self.create(self.payload())
+        project_id = result['project']['project_id']
+        child = self.server.project_registry.get(project_id)
+        route = '/p/' + project_id + '/api/workspace/model-settings'
+        thread_id = child.store.workspace()['thread_id']
+        old_settings = child.gateway.state()['model_settings']
+        self.assertTrue(child.gateway.state()['model_settings_supported'])
+        # Persist a real turn first so this is an existing conversation.
+        child.gateway.adapter.start_turn('first feedback')
+        until(lambda: child.gateway.adapter.status()['turn_state'] == 'idle')
+        payload = dict(model='alternate-vision', reasoning_effort=None, expected_settings=old_settings)
+        self.assertEqual(self.request('POST', route, payload, capability=self.root_context.store.browser_token)[0], 403)
+        # Changing only settings cannot alter scene, evidence, or session identity.
+        scene_before = child.store.scene()
+        session_id = child.store.workspace()['session_id']
+        status, reply, _ = self.request('POST', route, payload, capability=child.store.browser_token)
+        self.assertEqual(status, 200, reply)
+        self.assertEqual(reply['workspace']['model_settings'], dict(model='alternate-vision', reasoning_effort='low'))
+        self.assertEqual(child.store.workspace()['thread_id'], thread_id)
+        self.assertEqual(child.store.workspace()['session_id'], session_id)
+        self.assertEqual(child.store.scene(), scene_before)
+        self.assertEqual(self.request('POST', route, payload, capability=child.store.browser_token)[0], 409)
+        child.gateway.adapter.start_turn('second feedback')
+        until(lambda: child.gateway.adapter.status()['turn_state'] == 'idle')
+        turn = self.wire('turn/start')[-1]
+        self.assertEqual((turn['threadId'], turn['model'], turn['effort']), (thread_id, 'alternate-vision', 'low'))
+        self.assertEqual(turn['sandboxPolicy']['type'], 'workspaceWrite')
+        self.stop_server()
+        self.start_server()
+        child = self.server.project_registry.get(project_id)
+        self.assertEqual(child.gateway.state()['model_settings'], dict(model='alternate-vision', reasoning_effort='low'))
+        self.assertEqual(child.store.workspace()['thread_id'], thread_id)
+        self.assertEqual(len(self.wire('thread/start')), 2)
+        resume = [r for r in self.wire('thread/resume') if r['threadId'] == thread_id][-1]
+        self.assertEqual(resume['model'], 'alternate-vision')
+        self.assertEqual(resume['config']['model_reasoning_effort'], 'low')
+        child.gateway.adapter.start_turn('after restart')
+        until(lambda: child.gateway.adapter.status()['turn_state'] == 'idle')
+        self.assertEqual(self.wire('turn/start')[-1]['model'], 'alternate-vision')
+        # Project creation retries still use the original immutable creation spec.
+        self.assertEqual(child.gateway.adapter.sandbox, 'workspace-write')
+
+    def test_model_settings_validation_busy_and_failed_save(self):
+        gateway = self.root_context.gateway
+        adapter = gateway.adapter
+        settings = gateway.state()['model_settings']
+        payload = dict(model='alternate-vision', reasoning_effort='high', expected_settings=settings)
+        route = '/api/workspace/model-settings'
+        capability = self.root_context.store.browser_token
+        def post(value):
+            return self.request('POST', route, value, capability=capability)
+        for change in [dict(model='text-only'), dict(model='missing'), dict(reasoning_effort='bad'), dict(reasoning_effort=[])]:
+            self.assertEqual(post(dict(payload, **change))[0], 400)
+        self.assertEqual(post(dict(payload, permission_mode='full_access'))[0], 400)
+        for queue_status in ['queued', 'running', 'dispatching', 'delivery_uncertain']:
+            with gateway.store.lock:
+                gateway.store.state['workspace']['queue'] = [dict(feedback_id='pending', status=queue_status)]
+            self.assertEqual(post(payload)[0], 409)
+        with gateway.store.lock:
+            gateway.store.state['workspace']['queue'] = []
+        with patch.object(adapter, '_turn_state', 'running'):
+            self.assertEqual(post(payload)[0], 409)
+        with patch.object(gateway.store, '_save', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                gateway.update_model_settings(payload)
+        self.assertEqual(gateway.state()['model_settings'], settings)
+        self.assertEqual((adapter.model, adapter.reasoning_effort), (settings['model'], settings['reasoning_effort']))
+        with patch.object(gateway, 'external_review', True):
+            self.assertEqual(post(payload)[0], 409)
+        with patch.object(gateway, 'blank_workbench', True, create=True):
+            self.assertEqual(post(payload)[0], 409)
+
     def test_model_catalog_pagination_failure_and_disabled_cli(self):
         adapter = self.root_context.gateway.adapter
-        pages = [{'data': [CATALOG[0]], 'nextCursor': 'page2'}, {'data': [CATALOG[1]], 'nextCursor': None}]
+        pages = [{'data': [CATALOG[0]], 'nextCursor': 'page2'}, {'data': CATALOG[1:], 'nextCursor': None}]
         with patch.object(adapter, '_rpc', side_effect=pages) as rpc:
             self.assertEqual(adapter.list_models(), CATALOG)
             self.assertEqual(rpc.call_args_list[1].args[1]['cursor'], 'page2')

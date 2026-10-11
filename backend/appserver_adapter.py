@@ -133,6 +133,23 @@ class CodexAppServerAdapter:
         with self._state_lock:
             return self._thread_id
 
+    def configure_model(self, model: str, reasoning_effort: str | None, *, persist=None) -> None:
+        """Change future turns without replacing the thread or its permissions.
+
+        The durable commit runs while turn submission is excluded; failed saves
+        leave the running adapter unchanged. Reconnects use the same settings.
+        """
+        with self._turn_lock, self._state_lock:
+            if self._turn_state != "idle":
+                raise TurnBusyError("finish or resolve the current turn before changing models")
+            if persist is not None:
+                persist()
+            self.model = model
+            self.reasoning_effort = reasoning_effort
+            self._thread_config.pop("model_reasoning_effort", None)
+            if reasoning_effort is not None:
+                self._thread_config["model_reasoning_effort"] = reasoning_effort
+
     def start(self) -> str:
         """Start or reconnect stdio and return this project's persisted thread ID.
 
@@ -333,8 +350,8 @@ class CodexAppServerAdapter:
             }
             if self.model:
                 params["model"] = self.model
-            if self.reasoning_effort:
-                params["effort"] = self.reasoning_effort
+            # Explicit null clears an earlier turn's effort override.
+            params["effort"] = self.reasoning_effort
             if message_id is not None:
                 params["clientUserMessageId"] = message_id
             try:

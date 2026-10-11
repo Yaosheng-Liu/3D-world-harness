@@ -505,6 +505,9 @@ def _make_server_unlocked(
                         return self._send_json(200, gateway.pose_jobs.download(job_id))
                     return self._send_json(200, gateway.pose_jobs.get(job_id, frame_offset=offset, max_frames=limit,
                                                                        reference_id=reference_id, view_id=view_id))
+            if self.command == "POST" and path == "/api/workspace/model-settings":
+                self._require_browser_capability()
+                return self._send_json(200, gateway.update_model_settings(self._read_json()))
             if self.command == "POST" and path == "/api/workspace/targets":
                 self._require_browser_capability()
                 payload = self._read_json()

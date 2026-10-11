@@ -112,3 +112,14 @@ html:not([data-layout=immersive]) .scene-pane > .pane-head { min-height: 48px; }
 @media (prefers-reduced-transparency: reduce) {
   .sidebar-panel { background: var(--paper); backdrop-filter: none; }
 }
+
+/* Session model settings reuse the drawer's motion and theme. */
+.session-model-current { display: grid; gap: 7px; padding: 14px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-hover); }
+.session-model-current strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.session-model-actions { display: flex; gap: 8px; margin-top: 12px; }
+.session-model-actions .create-target-button { flex: 1; margin: 0; }
+#model-settings-status { min-height: 3em; line-height: 1.7; font-size: 12px; color: var(--muted); }
+#model-settings-status[data-error="true"] { color: var(--danger, #ae4c3c); }
+#model-settings-button[hidden] { display: none; }
+#model-settings-form :is(select) { width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; }
+#model-settings-form label { color: var(--muted); font-size: 12px; }

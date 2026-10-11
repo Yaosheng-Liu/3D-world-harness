@@ -111,6 +111,12 @@ class WorkspaceGateway:
         result["task_connection_supported"] = connection_supported
         result["task_creation_supported"] = connection_supported
         result["model_selection_supported"] = connection_supported
+        result["model_settings_supported"] = self._can_configure_model()
+        result["model_settings"] = copy.deepcopy(result.get("model_settings") or {
+            "model": getattr(self.adapter, "model", None),
+            "reasoning_effort": getattr(self.adapter, "reasoning_effort", None),
+        })
+        result["model_settings_busy"] = self._model_settings_busy(result)
         result["desktop_available"] = self.external_review and self._desktop_available(result)
         result["project_creation_supported"] = self.service_feedback_transport != "mcp_events" and (
             result["desktop_available"] or not self.external_review and callable(getattr(self.adapter, "list_models", None)))
@@ -174,6 +180,9 @@ class WorkspaceGateway:
             self._supervisor_thread.start()
             return
         try:
+            saved_model = self.store.workspace().get("model_settings")
+            if self._can_configure_model() and saved_model:
+                self.adapter.configure_model(saved_model["model"], saved_model.get("reasoning_effort"))
             thread_id = self.adapter.start()
             self.store.workspace_thread(thread_id)
             bound_task_idle = True
@@ -450,6 +459,65 @@ class WorkspaceGateway:
             })
         default_model = next((entry["model"] for entry in models if entry["is_default"]), None)
         return {"models": models, "default_model": default_model or (models[0]["model"] if models else None)}
+
+    def _can_configure_model(self) -> bool:
+        return (not self.external_review and self.feedback_transport != "mcp_events"
+                and not getattr(self, "blank_workbench", False)
+                and callable(getattr(self.adapter, "configure_model", None)))
+
+    @staticmethod
+    def _model_settings_busy(workspace: dict[str, Any]) -> bool:
+        return bool(workspace.get("active_feedback_id") or workspace.get("approvals") or any(
+            item.get("status") in {"queued", "dispatching", "running", "awaiting_mcp", "blocked_stale"}
+            or item.get("status") == "delivery_uncertain" and not item.get("quarantined_at")
+            for item in workspace.get("queue", [])
+        ))
+
+    def update_model_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.ensure()
+        if not self._can_configure_model():
+            raise APIError(409, "当前场景不支持切换会话模型")
+        if set(payload) != {"model", "reasoning_effort", "expected_settings"}:
+            raise APIError(400, "model, reasoning_effort and expected_settings are required")
+        if not isinstance(payload["model"], str) or not isinstance(payload["expected_settings"], dict):
+            raise APIError(400, "invalid model settings")
+        # Read the account catalog before taking locks needed by adapter events.
+        catalog = self.list_models()["models"]
+        selection = next((m for m in catalog if m["model"] == payload["model"]), None)
+        if selection is None:
+            raise APIError(400, "请选择当前账号可用的视觉模型")
+        effort = payload["reasoning_effort"]
+        if effort is None:
+            effort = selection["default_reasoning_effort"]
+        if effort is not None and effort not in selection["supported_reasoning_efforts"]:
+            raise APIError(400, "此模型不支持所选推理强度")
+        settings = {"model": selection["model"], "reasoning_effort": effort}
+        with self._route_lock, self._worker_lock, self.store.lock:
+            workspace = self.store.state["workspace"]
+            if self._worker_running or self._model_settings_busy(workspace):
+                raise APIError(409, "请先完成、停止或处理当前及排队中的反馈，再切换模型")
+            current = workspace.get("model_settings") or {
+                "model": self.adapter.model, "reasoning_effort": self.adapter.reasoning_effort,
+            }
+            if payload["expected_settings"] != current:
+                raise APIError(409, "模型设置已在其他页面更改，请刷新后重试")
+            def persist():
+                previous = workspace.get("model_settings")
+                workspace["model_settings"] = settings
+                try:
+                    self.store._save()
+                except Exception:
+                    if previous is None:
+                        workspace.pop("model_settings", None)
+                    else:
+                        workspace["model_settings"] = previous
+                    raise
+            from appserver_adapter import TurnBusyError
+            try:
+                self.adapter.configure_model(settings["model"], effort, persist=persist)
+            except TurnBusyError as exc:
+                raise APIError(409, "当前模型仍在执行或等待确认，请稍后重试") from exc
+        return {"workspace": self.state()}
 
     def list_models(self) -> dict[str, Any]:
         if not self.external_review:

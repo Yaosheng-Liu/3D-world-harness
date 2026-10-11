@@ -7,6 +7,7 @@ import { setupMinimalLayout } from './layout.js';
 import { setupImmersive } from './immersive.js';
 import { setupTheme } from './theme.js';
 import {setupPromptAttachments} from './prompt-attachments.js';
+import {setupModelSettings} from './model-settings.js';
 import {setupWorkspaceSidebar} from './workspace-sidebar.js';
 import {setupWorkspaceFolderImport} from './workspace-folder-import.js';
 import {setupSnapshotGallery} from './snapshot-gallery.js';
@@ -33,6 +34,7 @@ import {createPromptReferencePopover} from './prompt-reference-popover.js';
 import { compactReferenceMessage } from './prompt-reference-display.js';
 import { setupReferenceLivewire } from './livewire.js';
 
+let modelSettings = null;
 const id = (name) => document.getElementById(name);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const SNAPSHOT_ZOOM_MIN = .1, SNAPSHOT_ZOOM_MAX = 8;
@@ -627,7 +629,7 @@ function updateSubmitLabel() {
   const status = state.agent?.status || 'disconnected';
   if (state.feedbackTransport === 'mcp_events') {
     setSubmitLabel(state.submitting ? '正在发送…' : state.pendingSubmission ? '重试发送' : '发送反馈');
-    ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
+    ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.updatingModel || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
     ui.note.disabled = state.sessionStatus !== 'open' || state.submitting || !!state.pendingSubmission;
     ui.referenceInput.disabled = state.sessionStatus !== 'open' || !!state.pendingSubmission || state.creatingProject || state.navigatingProject;
     ui.caption.textContent = ['submitted', 'cancelled'].includes(state.sessionStatus)
@@ -644,7 +646,7 @@ function updateSubmitLabel() {
       : bound && ['running', 'awaiting_approval', 'waiting'].includes(status) ? '加入下一轮'
       : bound ? '发送反馈' : '保存反馈';
     setSubmitLabel(label);
-    ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
+    ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.updatingModel || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
     ui.note.disabled = state.sessionStatus !== 'open' || state.submitting || !!state.pendingSubmission;
     ui.referenceInput.disabled = state.sessionStatus !== 'open' || !!state.pendingSubmission || state.creatingProject || state.navigatingProject;
     ui.caption.textContent = ['submitted', 'cancelled'].includes(state.sessionStatus)
@@ -665,7 +667,7 @@ function updateSubmitLabel() {
     : status === 'disconnected' || status === 'error' ? '保存反馈'
     : '发送反馈';
   setSubmitLabel(label);
-  ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
+  ui.submit.disabled = !state.workspaceReady || !Number.isInteger(state.sceneRevision) || state.sessionStatus !== 'open' || state.sceneLoading || state.submitting || state.updatingModel || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || !!state.citingSceneProject;
   ui.note.disabled = state.sessionStatus !== 'open' || state.submitting || !!state.pendingSubmission;
   ui.referenceInput.disabled = state.sessionStatus !== 'open' || !!state.pendingSubmission || state.creatingProject || state.navigatingProject;
   if (['submitted', 'cancelled'].includes(state.sessionStatus)) ui.caption.textContent = '会话已结束，标记仍可查看。';
@@ -1302,6 +1304,7 @@ function renderWorkspace(workspace) {
   state.agent = workspace.agent || {status:'disconnected'};
   state.queue = Array.isArray(workspace.queue) ? workspace.queue : [];
   state.approvals = Array.isArray(workspace.approvals) ? workspace.approvals : [];
+  modelSettings?.update(workspace);
   if (state.feedbackTransport === 'mcp_events') {
     renderEventWorkspace();
     return;
@@ -6061,7 +6064,7 @@ async function feedbackPayload(referencedSceneNodes, promptText) {
 }
 async function submitFeedback() {
   if(livewire?.active) { announce('请先完成或取消左图的智能轮廓，再发送反馈。',true);return; }
-  if (!state.workspaceReady || !state.sessionId || !Number.isInteger(state.sceneRevision) || state.sceneLoading || state.submitting || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || state.citingSceneProject) return;
+  if (!state.workspaceReady || !state.sessionId || !Number.isInteger(state.sceneRevision) || state.sceneLoading || state.submitting || state.updatingModel || state.uploading || state.creatingProject || state.navigatingProject || state.creatingTarget || state.switchingTarget || state.citingSceneProject) return;
   const promptText = promptReferenceText.expand(ui.note.value);
   if(!state.sceneReferencesSupported && (/\[\[scene:/.test(promptText) || state.pendingSubmission?.payload?.scene_refs?.length)) {
     announce('服务尚不支持场景引用，请更新服务后再发送；当前草稿已保留。',true);return;
@@ -6340,8 +6343,12 @@ function bindEvents() {
   workspaceFolderImport=setupWorkspaceFolderImport({api,
     isEnabled:()=>state.workspaceReady && state.projectFolderImportSupported && !state.creatingProject && !state.navigatingProject && !state.unloadingProjectId,
     onImported:()=>loadProjects(),onError:message=>announce(message,true)});
+  modelSettings=setupModelSettings({api,onWorkspace:renderWorkspace,
+    isSubmitting:()=>state.submitting || !!state.pendingSubmission,
+    onSaving:value=>{state.updatingModel=value;updateSubmitLabel();}});
   workspaceSidebar=setupWorkspaceSidebar({onOpen:loadSidebarProjects,onPage:page=>{
     workspaceFolderImport?.onPage(page);
+    if(page==='model') modelSettings?.open();
     if(page==='create') {renderCreateProject();if(!state.models || state.modelLoadError) loadModels({forProjects:true}).catch(()=>{});}
     if(page==='tasks' && state.taskConnectionSupported) {
       renderTargetPicker();loadTargets().catch(()=>{});
