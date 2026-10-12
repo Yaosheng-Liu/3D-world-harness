@@ -1,7 +1,7 @@
 import {actionIcon} from './action-icons.js';
 
 // The live scene leads the collection; saved evidence keeps its creation order.
-export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabled:false}), getTimeline, onLive=()=>{}, onOpen, onTime=()=>{}, onRemove, resourceURL}) {
+export function setupSnapshotGallery({getItems, getPreview=()=>[], drawPreviewMark=()=>{}, getLive=()=>({active:true,disabled:false}), getTimeline, onLive=()=>{}, onOpen, onTime=()=>{}, onRemove, resourceURL}) {
   const strip=document.getElementById('scene-snapshot-strip');
   const gallery=document.getElementById('scene-snapshots'),footer=document.querySelector('.scene-pane-footer');
   function placeGallery() {
@@ -18,18 +18,87 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
   preview.id='snapshot-gallery-preview';preview.setAttribute('role','group');preview.setAttribute('aria-label','选择此时刻的截图');document.body.append(preview);
   let signature='',tickSignature='',activeKey=null,anchor=null,restoringFocus=false;
   function el(tag,text,cls) {const node=document.createElement(tag);if(text) node.textContent=text;if(cls) node.className=cls;return node;}
-  // Hover previews never contribute to row geometry or take keyboard focus.
+  // The floating preview never contributes to row geometry or opens a snapshot.
   const hover=document.createElement('div');hover.id='snapshot-card-preview';hover.className='snapshot-card-preview';
-  hover.hidden=true;hover.setAttribute('role','tooltip');document.body.append(hover);
+  hover.hidden=true;hover.setAttribute('role','dialog');hover.setAttribute('aria-label','截图预览');document.body.append(hover);
   const finePointer=matchMedia('(hover: hover) and (pointer: fine)'),reduced=matchMedia('(prefers-reduced-motion: reduce)');
-  let hoverTimer=null,hoverAnchor=null,hoverMotion=null,hoverEpoch=0;
+  let hoverTimer=null,leaveTimer=null,pendingAnchor=null,hoverAnchor=null,hoverMotion=null,hoverEpoch=0;
   function hideHover(immediate=false) {
-    clearTimeout(hoverTimer);hoverTimer=null;
-    hoverAnchor?.removeAttribute('aria-describedby');hoverAnchor=null;
+    clearTimeout(hoverTimer);clearTimeout(leaveTimer);hoverTimer=null;pendingAnchor=null;
+    hoverAnchor?.setAttribute('aria-expanded','false');hoverAnchor=null;hover.inert=true;
     const ticket=++hoverEpoch;hoverMotion?.cancel();
     if(hover.hidden || immediate || reduced.matches) {hover.hidden=true;return;}
     hoverMotion=hover.animate([{opacity:1},{opacity:0}],{duration:110,fill:'both'});
     hoverMotion.finished.then(()=>{if(ticket===hoverEpoch) hover.hidden=true;}).catch(()=>{});
+  }
+  function leaveHover() {
+    clearTimeout(leaveTimer);
+    if(hover.hidden) {hideHover(true);return;}
+    // Allow crossing the gap to the preview, including when it avoids the chat.
+    leaveTimer=setTimeout(()=>{
+      if(!hover.matches(':hover') && !hover.querySelector(':focus-visible') && !hoverAnchor?.matches(':hover,:focus-visible')) hideHover();
+    },350);
+  }
+  function returnHoverFocus() {
+    const button=hoverAnchor;hideHover(true);restoringFocus=true;
+    button?.focus({preventScroll:true});restoringFocus=false;
+  }
+  function previewContent(item,ticket) {
+    const layers=getPreview(item.id);
+    if(!layers.length) layers.push({name:'场景',url:item.cover || item.scene,marks:[]});
+    let layerIndex=0,showMarks=true,imageEpoch=0;
+    const caption=el('div',null,'snapshot-card-preview-caption');
+    caption.append(el('strong',item.name),el('span',item.detail || '固定视角'));
+    const media=el('div',null,'snapshot-card-preview-media');
+    const bar=el('div',null,'snapshot-card-preview-toolbar'),sources=el('div',null,'snapshot-preview-segments');
+    const modes=el('div',null,'snapshot-preview-segments');modes.setAttribute('role','group');modes.setAttribute('aria-label','标记显示');
+    const marked=el('button','标记'),original=el('button','原图'),count=el('span',null,'snapshot-preview-count');marked.append(count);
+    marked.dataset.previewMode='marked';original.dataset.previewMode='original';
+    for(const button of [marked,original]) button.type='button';
+    modes.append(marked,original);
+    if(layers.length>1) {
+      sources.setAttribute('role','group');sources.setAttribute('aria-label','预览画面');
+      layers.forEach((layer,index)=>{
+        const button=el('button',layer.name);button.type='button';button.dataset.previewLayer=String(index);
+        button.addEventListener('click',()=>{if(layerIndex!==index) {layerIndex=index;renderImage();}});sources.append(button);
+      });
+    } else sources.append(el('span','场景','snapshot-preview-source'));
+    bar.append(sources,modes);hover.replaceChildren(caption,media,bar);
+    hover.setAttribute('aria-label',item.name+'预览');
+    function renderImage() {
+      const layer=layers[layerIndex],loadTicket=++imageEpoch;
+      const img=el('img'),canvas=el('canvas');img.alt=item.name+' · '+layer.name;canvas.setAttribute('aria-hidden','true');
+      const comparison=layer.comparison?.enabled && layer.comparison.opacity>0 ? layer.comparison : null;
+      const overlay=comparison ? new Image() : null;
+      const current=()=>ticket===hoverEpoch && loadTicket===imageEpoch;
+      function paint() {
+        if(!current() || !img.naturalWidth) return;
+        const scale=Math.min(media.clientWidth/img.naturalWidth,media.clientHeight/img.naturalHeight);
+        const width=img.naturalWidth*scale,height=img.naturalHeight*scale,ratio=Math.min(devicePixelRatio || 1,2);
+        canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);
+        canvas.style.width=width+'px';canvas.style.height=height+'px';
+        const context=canvas.getContext('2d');context.scale(ratio,ratio);
+        if(overlay?.complete && overlay.naturalWidth) {
+          const rect=comparison.rect;context.globalAlpha=comparison.opacity/100;
+          context.drawImage(overlay,rect.x*width,rect.y*height,rect.width*width,rect.height*height);context.globalAlpha=1;
+        }
+        for(const mark of layer.marks) drawPreviewMark(context,mark,width,height);
+        canvas.dataset.ready='true';
+      }
+      img.addEventListener('load',paint,{once:true});
+      img.addEventListener('error',()=>{if(current()) media.replaceChildren(el('span','图片暂时无法加载','snapshot-preview-error'));},{once:true});
+      if(overlay) {overlay.addEventListener('load',paint,{once:true});overlay.src=resourceURL(comparison.data_url);}
+      canvas.hidden=!showMarks;media.replaceChildren(img,canvas);img.src=resourceURL(layer.url);
+      count.textContent=String(layer.marks.length);marked.setAttribute('aria-label','显示标记 · '+layer.marks.length+' 个');
+      for(const button of sources.querySelectorAll('button')) button.setAttribute('aria-pressed',String(Number(button.dataset.previewLayer)===layerIndex));
+      updateMode();
+    }
+    function updateMode() {
+      marked.setAttribute('aria-pressed',String(showMarks));original.setAttribute('aria-pressed',String(!showMarks));
+      const canvas=media.querySelector('canvas');if(canvas) canvas.hidden=!showMarks;
+    }
+    marked.addEventListener('click',()=>{showMarks=true;updateMode();});original.addEventListener('click',()=>{showMarks=false;updateMode();});
+    renderImage();
   }
   function positionHover(button) {
     const r=button.getBoundingClientRect(),p=hover.getBoundingClientRect(),gap=12;
@@ -50,22 +119,22 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
     hover.style.left=x+'px';hover.style.top=y+'px';return true;
   }
   function scheduleHover(button) {
-    hideHover(true);
-    if(!button || button.disabled || button.id==='scene-live-card' || collapsed || !preview.hidden) return;
-    const ticket=hoverEpoch;hoverAnchor=button;
+    clearTimeout(hoverTimer);clearTimeout(leaveTimer);hoverTimer=null;pendingAnchor=null;
+    if(button===hoverAnchor && !hover.hidden && !hover.inert) return;
+    if(!button || button.disabled || button.id==='scene-live-card' || collapsed || !preview.hidden) {leaveHover();return;}
+    // Crossing a neighboring card on the way to the popup must not close it.
+    // Replace the current preview only after the new card's dwell time.
+    const ticket=hoverEpoch;pendingAnchor=button;
     hoverTimer=setTimeout(()=>{
-      hoverTimer=null;
+      hoverTimer=null;pendingAnchor=null;
       if(ticket!==hoverEpoch || !button.isConnected || document.querySelector('dialog[open]') ||
           !button.matches(':hover,:focus-visible')) return;
       const item=getItems().find(item=>item.id===button.dataset.snapshotId);
       if(!item || item.disabled) return;
-      const img=el('img');img.src=resourceURL(item.cover || item.scene);img.alt=item.name;
-      const caption=el('div',null,'snapshot-card-preview-caption');
-      caption.append(el('strong',item.name),el('span',item.detail || '固定视角'));
-      hover.replaceChildren(img,caption);hover.hidden=false;
+      hideHover(true);hoverAnchor=button;
+      hover.hidden=false;hover.inert=false;previewContent(item,hoverEpoch);
       if(!positionHover(button)) {hideHover(true);return;}
-      button.setAttribute('aria-describedby',hover.id);
-      img.addEventListener('error',()=>{if(ticket===hoverEpoch) hideHover(true);},{once:true});
+      button.setAttribute('aria-expanded','true');
       if(!reduced.matches) hoverMotion=hover.animate([{opacity:0,transform:'translateY(5px)'},{opacity:1,transform:'translateY(0)'}],{duration:160,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
     },400);
   }
@@ -74,20 +143,38 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
     if(finePointer.matches && event.pointerType!=='touch' && !event.buttons && button && !button.contains(event.relatedTarget)) scheduleHover(button);
   });
   strip.addEventListener('pointerout',event=>{
-    if(hoverAnchor && hoverAnchor.contains(event.target) && !hoverAnchor.contains(event.relatedTarget)) hideHover();
+    const button=event.target.closest('.snapshot-open');
+    if(button && !button.contains(event.relatedTarget)) leaveHover();
   });
   strip.addEventListener('focusin',event=>{if(!restoringFocus && event.target.matches('.snapshot-open:focus-visible')) scheduleHover(event.target);});
-  strip.addEventListener('focusout',()=>hideHover());
+  strip.addEventListener('focusout',event=>{if(!hover.contains(event.relatedTarget)) hideHover();});
+  strip.addEventListener('keydown',event=>{
+    if(event.key==='Tab' && !event.shiftKey && event.target===hoverAnchor && !hover.hidden && !hover.inert) {
+      event.preventDefault();hover.querySelector('button')?.focus({preventScroll:true});
+    }
+  });
+  hover.addEventListener('pointerenter',()=>clearTimeout(leaveTimer));
+  hover.addEventListener('pointerleave',leaveHover);
+  hover.addEventListener('focusout',event=>{if(!hover.contains(event.relatedTarget) && event.relatedTarget!==hoverAnchor) hideHover();});
+  hover.addEventListener('keydown',event=>{
+    const buttons=[...hover.querySelectorAll('button')];
+    if(event.key==='Tab' && (event.shiftKey && event.target===buttons[0] || !event.shiftKey && event.target===buttons.at(-1))) {
+      returnHoverFocus();if(event.shiftKey) event.preventDefault();
+    }
+  });
   strip.addEventListener('wheel',()=>hideHover(),{passive:true});
-  document.addEventListener('pointerdown',()=>hideHover(),{capture:true});
+  document.addEventListener('pointerdown',event=>{if(!hover.contains(event.target)) hideHover();},{capture:true});
   document.addEventListener('scroll',event=>{
     // Arrow-key navigation scrolls the focused card into view before its preview.
-    if(event.target===strip && hoverAnchor?.matches(':focus-visible')) {
-      if(!hover.hidden && !positionHover(hoverAnchor)) hideHover(true);
+    if(event.target===strip && (pendingAnchor || hoverAnchor)?.matches(':focus-visible')) {
+      if(!hover.hidden && hoverAnchor && !positionHover(hoverAnchor)) hideHover(true);
     } else hideHover();
   },{capture:true,passive:true});
   document.addEventListener('keydown',event=>{
-    if(event.key==='Escape' && (hoverTimer || !hover.hidden)) {hideHover(true);event.preventDefault();event.stopImmediatePropagation();}
+    if(event.key==='Escape' && (hoverTimer || !hover.hidden)) {
+      if(hover.contains(document.activeElement)) returnHoverFocus();else hideHover(true);
+      event.preventDefault();event.stopImmediatePropagation();
+    }
   },{capture:true});
   window.addEventListener('blur',()=>hideHover(true));
   document.addEventListener('visibilitychange',()=>{if(document.hidden) hideHover(true);});
@@ -167,7 +254,10 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
         const card=el('div',null,'snapshot-card');card.dataset.kind=item.live?'live':item.dynamic?'moment':'static';card.dataset.galleryKey=item.id;
         if(!item.live) card.dataset.snapshotId=item.id;
         const open=el('button',null,'snapshot-open');open.type='button';open.disabled=item.disabled;
-        if(item.live) open.id='scene-live-card';else open.dataset.snapshotId=item.id;
+        if(item.live) open.id='scene-live-card';else {
+          open.dataset.snapshotId=item.id;open.setAttribute('aria-haspopup','dialog');
+          open.setAttribute('aria-controls',hover.id);open.setAttribute('aria-expanded','false');
+        }
         open.setAttribute('aria-pressed',String(!!item.active));open.setAttribute('aria-label',item.title);
         const thumb=el('span',null,'snapshot-thumb'),img=el('img');img.alt='';thumb.append(img);
         if(item.live) {
@@ -252,7 +342,7 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
   });
   for(const node of [gallery,footer,document.getElementById('timeline-panel')]) layoutSizes.observe(node);
   preview.addEventListener('focusout',event=>{if(!preview.contains(event.relatedTarget)) hide();});
-  document.addEventListener('pointerdown',event=>{if(!preview.contains(event.target) && event.target!==anchor) hide();},{capture:true});
+  document.addEventListener('pointerdown',event=>{if(!preview.hidden && !preview.contains(event.target) && event.target!==anchor) hide();},{capture:true});
   document.addEventListener('keydown',event=> {if(event.key==='Escape' && !preview.hidden) {const target=anchor;hide();target?.focus({preventScroll:true});event.stopImmediatePropagation();event.preventDefault();}},{capture:true});
   document.addEventListener('scroll',event=>{if(!preview.hidden && !preview.contains(event.target)) hide();},{capture:true,passive:true});
   window.addEventListener('resize',hide);

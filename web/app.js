@@ -2685,6 +2685,17 @@ function galleryItems() {
       cover:snapshot.data_url,reference:dynamic ? snapshot.reference_url : null,scene:snapshot.data_url};
   });
 }
+function galleryPreview(snapshotId) {
+  const snapshot=[...state.sceneSnapshots,...state.dynamicSnapshots].find(item=>item.id===snapshotId);
+  if(!snapshot) return [];
+  const layers=[{name:'场景',url:snapshot.data_url,comparison:snapshot.comparison,
+    marks:state.annotations.filter(mark=>mark.pane==='scene' && mark.snapshot_id===snapshotId)}];
+  if(Number.isFinite(snapshot.time_sec) && snapshot.reference_url) layers.push({
+    name:'参考帧',url:snapshot.reference_url,
+    marks:state.annotations.filter(mark=>mark.pane==='reference' && markMatchesMoment(mark,snapshot))
+  });
+  return layers;
+}
 function removeSavedSnapshot(snapshotId) {
   if(!editable()) return;
   const moment=state.dynamicSnapshots.find(entry=>entry.id===snapshotId);
@@ -6333,6 +6344,8 @@ async function poll() {
 }
 function bindEvents() {
   snapshotGallery=setupSnapshotGallery({getItems:galleryItems,
+    getPreview:galleryPreview,
+    drawPreviewMark:(context,mark,width,height)=>drawAnnotation(context,mark,width,height),
     getLive:()=>({active:state.sceneView==='live',disabled:!editable(),cover:liveScenePreview,name:'3D',title:'实时 3D · 拖动旋转、滚轮缩放'}),
     onLive:browseScene,
     getTimeline:()=>({duration:timelineDuration(),viewId:state.referenceClip ? referenceView()?.clip_id : null}),
