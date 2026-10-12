@@ -11,35 +11,106 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
       footer.append(gallery);
     }
   }
-  new MutationObserver(placeGallery).observe(document.documentElement,{attributes:true,attributeFilter:['data-layout']});
+  new MutationObserver(()=>{hide();placeGallery();}).observe(document.documentElement,{attributes:true,attributeFilter:['data-layout']});
   placeGallery();
   const ticks=document.getElementById('timeline-marks');
   const preview=document.createElement('div');preview.className='snapshot-preview';preview.hidden=true;
   preview.id='snapshot-gallery-preview';preview.setAttribute('role','group');preview.setAttribute('aria-label','选择此时刻的截图');document.body.append(preview);
-  let signature='',tickSignature='',activeKey=null,anchor=null;
-  function keepExpandedCardVisible(card) {
-    if (!card.isConnected || card.dataset.kind === 'live') return;
-    const bounds=strip.getBoundingClientRect(),rect=card.getBoundingClientRect(),live=strip.firstElementChild;
-    const left=getComputedStyle(live).position === 'sticky' ? live.getBoundingClientRect().right+8 : bounds.left+1;
-    const right=bounds.left+strip.clientWidth-8;
-    if (rect.left<left) strip.scrollLeft+=rect.left-left;
-    else if (rect.right>right) strip.scrollLeft+=rect.right-right;
-  }
-  // Keep the expanding card inside the row throughout its size transition.
-  // Moving only the strip preserves the pointer's target and the scene below.
-  const cardWidths=new WeakMap();
-  const cardSizes=new ResizeObserver(entries=>{
-    for (const {target,contentRect} of entries) {
-      const prior=cardWidths.get(target);cardWidths.set(target,contentRect.width);
-      if (contentRect.width>124 && (prior===undefined || contentRect.width>prior) &&
-          target.matches(':hover, :has(:focus-visible)')) keepExpandedCardVisible(target);
-    }
-  });
+  let signature='',tickSignature='',activeKey=null,anchor=null,restoringFocus=false;
   function el(tag,text,cls) {const node=document.createElement(tag);if(text) node.textContent=text;if(cls) node.className=cls;return node;}
+  // Hover previews never contribute to row geometry or take keyboard focus.
+  const hover=document.createElement('div');hover.id='snapshot-card-preview';hover.className='snapshot-card-preview';
+  hover.hidden=true;hover.setAttribute('role','tooltip');document.body.append(hover);
+  const finePointer=matchMedia('(hover: hover) and (pointer: fine)'),reduced=matchMedia('(prefers-reduced-motion: reduce)');
+  let hoverTimer=null,hoverAnchor=null,hoverMotion=null,hoverEpoch=0;
+  function hideHover(immediate=false) {
+    clearTimeout(hoverTimer);hoverTimer=null;
+    hoverAnchor?.removeAttribute('aria-describedby');hoverAnchor=null;
+    const ticket=++hoverEpoch;hoverMotion?.cancel();
+    if(hover.hidden || immediate || reduced.matches) {hover.hidden=true;return;}
+    hoverMotion=hover.animate([{opacity:1},{opacity:0}],{duration:110,fill:'both'});
+    hoverMotion.finished.then(()=>{if(ticket===hoverEpoch) hover.hidden=true;}).catch(()=>{});
+  }
+  function positionHover(button) {
+    const r=button.getBoundingClientRect(),p=hover.getBoundingClientRect(),gap=12;
+    let x=Math.max(8,Math.min(innerWidth-p.width-8,r.left+(r.width-p.width)/2));
+    let y=Math.max(8,r.top-p.height-gap);
+    // Keep the conversation readable. Prefer beside it; above it on narrow screens.
+    const chat=document.getElementById('chat-dock');
+    if(chat && getComputedStyle(chat).visibility!=='hidden' && chat.getClientRects().length) {
+      const c=chat.getBoundingClientRect();
+      if(x<c.right+gap && x+p.width>c.left-gap && y<c.bottom+gap && y+p.height>c.top-gap) {
+        const right=c.right+gap,left=c.left-p.width-gap;
+        if(right+p.width<=innerWidth-8) x=right;
+        else if(left>=8) x=left;
+        else y=c.top-p.height-gap;
+      }
+    }
+    if(y<8) return false;
+    hover.style.left=x+'px';hover.style.top=y+'px';return true;
+  }
+  function scheduleHover(button) {
+    hideHover(true);
+    if(!button || button.disabled || button.id==='scene-live-card' || collapsed || !preview.hidden) return;
+    const ticket=hoverEpoch;hoverAnchor=button;
+    hoverTimer=setTimeout(()=>{
+      hoverTimer=null;
+      if(ticket!==hoverEpoch || !button.isConnected || document.querySelector('dialog[open]') ||
+          !button.matches(':hover,:focus-visible')) return;
+      const item=getItems().find(item=>item.id===button.dataset.snapshotId);
+      if(!item || item.disabled) return;
+      const img=el('img');img.src=resourceURL(item.cover || item.scene);img.alt=item.name;
+      const caption=el('div',null,'snapshot-card-preview-caption');
+      caption.append(el('strong',item.name),el('span',item.detail || '固定视角'));
+      hover.replaceChildren(img,caption);hover.hidden=false;
+      if(!positionHover(button)) {hideHover(true);return;}
+      button.setAttribute('aria-describedby',hover.id);
+      img.addEventListener('error',()=>{if(ticket===hoverEpoch) hideHover(true);},{once:true});
+      if(!reduced.matches) hoverMotion=hover.animate([{opacity:0,transform:'translateY(5px)'},{opacity:1,transform:'translateY(0)'}],{duration:160,easing:'cubic-bezier(.22,1,.36,1)',fill:'both'});
+    },400);
+  }
+  strip.addEventListener('pointerover',event=>{
+    const button=event.target.closest('.snapshot-open');
+    if(finePointer.matches && event.pointerType!=='touch' && !event.buttons && button && !button.contains(event.relatedTarget)) scheduleHover(button);
+  });
+  strip.addEventListener('pointerout',event=>{
+    if(hoverAnchor && hoverAnchor.contains(event.target) && !hoverAnchor.contains(event.relatedTarget)) hideHover();
+  });
+  strip.addEventListener('focusin',event=>{if(!restoringFocus && event.target.matches('.snapshot-open:focus-visible')) scheduleHover(event.target);});
+  strip.addEventListener('focusout',()=>hideHover());
+  strip.addEventListener('wheel',()=>hideHover(),{passive:true});
+  document.addEventListener('pointerdown',()=>hideHover(),{capture:true});
+  document.addEventListener('scroll',event=>{
+    // Arrow-key navigation scrolls the focused card into view before its preview.
+    if(event.target===strip && hoverAnchor?.matches(':focus-visible')) {
+      if(!hover.hidden && !positionHover(hoverAnchor)) hideHover(true);
+    } else hideHover();
+  },{capture:true,passive:true});
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape' && (hoverTimer || !hover.hidden)) {hideHover(true);event.preventDefault();event.stopImmediatePropagation();}
+  },{capture:true});
+  window.addEventListener('blur',()=>hideHover(true));
+  document.addEventListener('visibilitychange',()=>{if(document.hidden) hideHover(true);});
+  // Collapsing is an explicit preference, independent of selection and hovering.
+  const body=document.getElementById('snapshot-gallery-body'),toggle=document.getElementById('snapshot-gallery-toggle'),count=document.getElementById('snapshot-gallery-count');
+  const storageKey='scene-gallery-collapsed:'+location.pathname;
+  let collapsed=false;
+  try {collapsed=localStorage.getItem(storageKey)==='true';} catch { /* Optional preference. */ }
+  function updateCollapse(total=getItems().length) {
+    gallery.classList.toggle('is-collapsed',collapsed);body.inert=collapsed;
+    toggle.setAttribute('aria-expanded',String(!collapsed));
+    toggle.setAttribute('aria-label',(collapsed?'展开':'收起')+'截图栏 · '+total+' 张截图');
+    toggle.title=collapsed?'展开截图栏':'收起截图栏';
+    count.textContent=total+' 张';count.hidden=!collapsed;
+  }
+  toggle.addEventListener('click',()=>{
+    hide();collapsed=!collapsed;updateCollapse();
+    try {localStorage.setItem(storageKey,String(collapsed));} catch { /* Optional preference. */ }
+  });
   function liveItem() {
     const live=getLive() || {};
     return {...live,id:'live',live:true,name:live.name || '3D',title:live.title || '实时 3D · 拖动旋转、滚轮缩放',
-      detail:'实时 · 可旋转浏览',scene:live.cover};
+      detail:'',scene:live.cover};
   }
   function cube() {
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -49,7 +120,7 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
     return svg;
   }
   function hide() {
-    preview.hidden=true;anchor?.removeAttribute('aria-describedby');anchor=null;
+    hideHover();preview.hidden=true;anchor?.removeAttribute('aria-describedby');anchor=null;
   }
   function position() {
     if(!anchor?.isConnected) {hide();return;}
@@ -60,6 +131,7 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
   }
   function showChooser(button,items) {
     if(document.querySelector('dialog[open]')) return;
+    hideHover();
     anchor?.removeAttribute('aria-describedby');anchor=button;
     preview.replaceChildren();
     for(const item of items) {
@@ -82,14 +154,15 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
     const cards=[live,...items];
     const nextActive=cards.find(item=>item.active)?.id || null,activeChanged=nextActive!==activeKey;
     activeKey=nextActive;
-    gallery.classList.remove('hidden','is-collapsed');
+    gallery.classList.remove('hidden');
+    updateCollapse(items.length);
     strip.setAttribute('aria-label','实时 3D 与保留截图');
     const next=JSON.stringify(cards.map(({id,title,name,detail,count,active,disabled,cover,live})=>[id,title,name,detail,count,active,disabled,live ? null : cover?.slice(0,80),live ? null : cover?.length]));
     if(next!==signature) {
       signature=next;hide();
       const focused=document.activeElement?.closest('.snapshot-card');const focusedId=focused?.dataset.galleryKey, wasRemove=document.activeElement?.classList.contains('snapshot-remove'), wasTime=document.activeElement?.classList.contains('snapshot-time-reference');
       const focusedIndex=[...strip.children].indexOf(focused);
-      const scroll=strip.scrollLeft;cardSizes.disconnect();strip.replaceChildren();
+      const scroll=strip.scrollLeft;strip.replaceChildren();
       for(const item of cards) {
         const card=el('div',null,'snapshot-card');card.dataset.kind=item.live?'live':item.dynamic?'moment':'static';card.dataset.galleryKey=item.id;
         if(!item.live) card.dataset.snapshotId=item.id;
@@ -105,7 +178,8 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
         if(item.dynamic) {const badge=el('span',null,'snapshot-video-icon');badge.append(actionIcon('play'));thumb.append(badge);}
         if(item.count) thumb.append(el('span',String(item.count),'snapshot-mark-count'));
         const meta=el('span',null,'snapshot-card-meta');
-        meta.append(el('strong',item.name,'snapshot-name'),el('small',item.dynamic ? '\u00a0' : item.detail || '固定视角',item.dynamic ? 'snapshot-time-space' : 'snapshot-source'));
+        meta.append(el('strong',item.name,'snapshot-name'));
+        if(!item.live) meta.append(el('small',item.dynamic ? '\u00a0' : item.detail || '固定视角',item.dynamic ? 'snapshot-time-space' : 'snapshot-source'));
         open.append(thumb,meta);
         open.addEventListener('click',()=>{hide();if(item.live) onLive();else onOpen(item.id);});card.append(open);
         if(item.dynamic) {
@@ -122,18 +196,20 @@ export function setupSnapshotGallery({getItems, getLive=()=>({active:true,disabl
           const remove=el('button','×','snapshot-remove');remove.type='button';remove.disabled=item.disabled;remove.title='删除'+item.name+'及其标记，可撤销';remove.setAttribute('aria-label',remove.title);
           remove.addEventListener('click',()=>{hide();onRemove(item.id);});card.append(remove);
         }
-        strip.append(card);cardSizes.observe(card);
+        strip.append(card);
       }
       strip.scrollLeft=scroll;
       if(focusedId) {
+        restoringFocus=true;
         const card=[...strip.children].find(card=>card.dataset.galleryKey===focusedId) || strip.children[Math.max(0,Math.min(focusedIndex,strip.children.length-1))];
         (wasRemove && card?.querySelector('.snapshot-remove') || wasTime && card?.querySelector('.snapshot-time-reference') || card?.querySelector('.snapshot-open'))?.focus({preventScroll:true});
+        restoringFocus=false;
       }
     }
     if(activeChanged && nextActive) requestAnimationFrame(()=>{
       if(activeKey!==nextActive) return;
       const card=[...strip.children].find(card=>card.dataset.galleryKey===nextActive);
-      card?.querySelector('.snapshot-open')?.scrollIntoView({block:'nearest',inline:'nearest'});
+      if(!collapsed) card?.querySelector('.snapshot-open')?.scrollIntoView({block:'nearest',inline:'nearest'});
     });
     // Updating the live cover must not rebuild saved cards or reset their focus.
     const liveThumb=strip.querySelector('[data-kind="live"] .snapshot-thumb');

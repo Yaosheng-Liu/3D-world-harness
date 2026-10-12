@@ -17,7 +17,7 @@ html:not([data-layout=immersive]) .app-shell :is(#chat-dock,#chat-launcher) { bo
 html:not([data-layout=immersive]) .app-shell .feedback-panel { max-height: calc(100dvh - var(--workspace-footer-height,139px) - var(--workspace-timeline-height,0px) - 130px); }
 /* A single row starts with the live scene, then follows evidence creation order. */
 .scene-snapshots { container: scene-gallery / inline-size; position: relative; inset: auto; flex: none; display: flex; align-items: flex-start; width: 100%; max-width: 100%; height: auto; margin: 0; padding: 3px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-menu); color: var(--ink); }
-.scene-snapshot-strip { --scene-live-width: 124px; display: flex; flex: 1; align-items: flex-start; gap: 8px; min-width: 0; height: auto; padding: 3px 1px 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-padding-inline: 0; transition: scroll-padding-inline-start 200ms ease; scrollbar-width: thin; scrollbar-color: #8a887d80 transparent; }
+.scene-snapshot-strip { --scene-live-width: 124px; display: flex; flex: 1; align-items: flex-start; gap: 8px; min-width: 0; height: 128px; padding: 3px 1px 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-padding-inline: 0; scrollbar-width: thin; scrollbar-color: #8a887d80 transparent; }
 @supports selector(::-webkit-scrollbar) {
   .scene-snapshot-strip { scrollbar-width: auto; scrollbar-color: auto; }
   .scene-snapshot-strip::-webkit-scrollbar { height: 5px; }
@@ -25,12 +25,12 @@ html:not([data-layout=immersive]) .app-shell .feedback-panel { max-height: calc(
   .scene-snapshot-strip::-webkit-scrollbar-thumb { border-radius: 4px; background: #8a887d80; }
   .scene-snapshot-strip::-webkit-scrollbar-thumb:hover { background: #74746e; }
 }
-.snapshot-card { --snapshot-card-width: 124px; --snapshot-thumb-width: 112px; --snapshot-thumb-height: 63px; position: relative; display: flex; align-items: flex-start; flex: none; width: var(--snapshot-card-width); min-width: 0; border-radius: 9px; transition: width 200ms ease; }
-.snapshot-open { display: flex; flex-direction: column; align-items: stretch; gap: 5px; width: 100%; padding: 5px; border: 1px solid transparent; border-radius: 9px; text-align: left; white-space: normal; font-variant-numeric: tabular-nums; }
-.snapshot-open:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line); }
+.snapshot-card { --snapshot-card-width: 124px; --snapshot-thumb-width: 112px; --snapshot-thumb-height: 63px; position: relative; display: flex; align-items: flex-start; flex: none; width: var(--snapshot-card-width); min-width: 0; border-radius: 9px; }
+.snapshot-open { display: flex; flex-direction: column; align-items: stretch; gap: 5px; width: 100%; padding: 5px; border: 1px solid transparent; border-radius: 9px; text-align: left; white-space: normal; font-variant-numeric: tabular-nums; transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
+.snapshot-open:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line); box-shadow: 0 2px 7px #00000012; }
 .snapshot-open[aria-pressed=true] { background: var(--paper); border-color: var(--ink); }
 .snapshot-open:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-.snapshot-thumb { position: relative; display: block; flex: none; width: var(--snapshot-thumb-width); height: var(--snapshot-thumb-height); overflow: hidden; border-radius: 5px; background: var(--stage); transition: width 200ms ease, height 200ms ease; }
+.snapshot-thumb { position: relative; display: block; flex: none; width: var(--snapshot-thumb-width); height: var(--snapshot-thumb-height); overflow: hidden; border-radius: 5px; background: var(--stage); }
 .snapshot-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 5px; }
 .snapshot-thumb [hidden] { display: none; }
 .snapshot-live-placeholder { display: grid; place-items: center; width: 100%; height: 100%; color: var(--muted); background: linear-gradient(145deg,var(--surface),var(--stage)); }
@@ -49,12 +49,6 @@ html:not([data-layout=immersive]) .app-shell .feedback-panel { max-height: calc(
 .snapshot-time-reference:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px; }
 .snapshot-remove { position: absolute; z-index: 3; top: 9px; right: 9px; display: grid; place-items: center; width: 22px; height: 22px; min-height: 0; padding: 0; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface-menu); font-size: 16px; }
 .snapshot-remove:hover:not(:disabled) { background: var(--surface-hover); }
-.snapshot-card:has(:focus-visible) { --snapshot-card-width: 172px; --snapshot-thumb-width: 160px; --snapshot-thumb-height: 90px; }
-.scene-snapshot-strip:has(#scene-live-card:focus-visible) { --scene-live-width: 172px; }
-@media (hover: hover) and (pointer: fine) {
-  .snapshot-card:hover { --snapshot-card-width: 172px; --snapshot-thumb-width: 160px; --snapshot-thumb-height: 90px; }
-  .scene-snapshot-strip:has(.snapshot-card[data-kind=live]:hover) { --scene-live-width: 172px; }
-}
 @container scene-gallery (min-width: 370px) {
   /* Leave room for a complete saved card before keeping live browsing pinned. */
   .snapshot-card[data-kind=live] { position: sticky; left: 0; z-index: 4; background: var(--surface-menu); box-shadow: 5px 0 8px -7px #17171540; }
@@ -96,3 +90,22 @@ html:not([data-layout=immersive]) .app-shell .feedback-panel { max-height: calc(
 @media (prefers-reduced-transparency: reduce) {
   [data-layout=immersive] body > .scene-snapshots { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
+
+/* The strip has a stable footprint; only this explicit toggle changes it. */
+.snapshot-gallery-body { display: grid; grid-template-rows: 1fr; min-width: 0; flex: 1; opacity: 1; transition: grid-template-rows 280ms cubic-bezier(.22,1,.36,1), opacity 180ms ease; }
+.snapshot-gallery-clip { overflow: hidden; min-height: 0; }
+.scene-snapshots.is-collapsed .snapshot-gallery-body { grid-template-rows: 0fr; opacity: 0; }
+.snapshot-gallery-rail { align-self: flex-end; flex: none; display: flex; align-items: center; gap: 4px; height: 32px; padding-inline: 2px; }
+#snapshot-gallery-toggle { display: grid; place-items: center; width: 28px; height: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+#snapshot-gallery-toggle:hover { color: var(--ink); background: var(--surface-hover); }
+#snapshot-gallery-toggle svg { transition: transform 280ms cubic-bezier(.22,1,.36,1); }
+.is-collapsed #snapshot-gallery-toggle svg { transform: rotate(180deg); }
+#snapshot-gallery-count { position: absolute; right: 42px; font-size: 11px; color: var(--muted); pointer-events: none; }
+#snapshot-gallery-count[hidden] { display: none; }
+.snapshot-card-preview { position: fixed; z-index: 145; width: min(320px,calc(100vw - 24px)); padding: 7px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface-menu); color: var(--ink); box-shadow: 0 10px 32px #00000030; pointer-events: none; }
+.snapshot-card-preview[hidden] { display: none; }
+.snapshot-card-preview img { display: block; width: 100%; height: min(180px,28dvh); object-fit: contain; border-radius: 8px; background: var(--stage); }
+.snapshot-card-preview-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 3px 2px; font-size: 11px; }
+.snapshot-card-preview-caption strong { min-width: 0; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snapshot-card-preview-caption span { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .snapshot-gallery-body, #snapshot-gallery-toggle svg, .snapshot-open { transition: none; } }
