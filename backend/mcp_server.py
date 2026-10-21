@@ -340,7 +340,7 @@ def workspace_set_reference_clip(manifest_path: str | None = None, video_path: s
 
     Sequence JSON: {name?,fps?,duration_sec?,frames:[{path,time_sec?,camera?}]}.
     Paths are relative to the manifest and must remain within the project.
-    Videos are fully sampled into at most 600 frames (ffmpeg required); fps defaults to 10.
+    Videos are fully sampled into at most 1200 frames (ffmpeg required); fps defaults to 10.
     An optional video camera manifest has one camera or timed frames[{time_sec,camera}].
     A multi-view manifest has views:[{name?,manifest_path|video_path|frames,fps?,duration_sec?,camera_manifest_path?}].
     append_view=True adds views while preserving the primary clip ID and existing frames (up to 8 views).

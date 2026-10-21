@@ -4173,8 +4173,8 @@ async function uploadClip(files) {
   const count = videos ? ordered.length : 1;
   if (referenceViews().length + count > 8) { announce('最多 8 个机位，请减少本次导入的机位数量。', true); return; }
   if (videos ? ordered.some((file) => file.size > 40 * 1024 * 1024)
-      : ordered.length > 600 || ordered.reduce((sum, file) => sum + file.size, 0) > 40 * 1024 * 1024) {
-    announce('每个机位最多 600 帧；单个视频或一组图片序列最多 40 MiB。', true); return;
+      : ordered.length > 1200 || ordered.reduce((sum, file) => sum + file.size, 0) > 40 * 1024 * 1024) {
+    announce('每个机位最多 1,200 帧；单个视频或一组图片序列最多 40 MiB。', true); return;
   }
   const name = ui.clipName.value.trim();
   pauseTimeline(); state.uploading = true; renderTimeline(); updateSubmitLabel();

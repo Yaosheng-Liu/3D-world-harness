@@ -1241,7 +1241,7 @@ class WorkspaceGateway:
 
     def set_reference_clip_paths(self, payload: Any) -> dict[str, Any]:
         """Validate every project-scoped view before publishing the complete group."""
-        from dynamic import MAX_CLIP_MANIFEST_BYTES, MAX_LOCAL_CLIP_BYTES, MAX_MULTIVIEW_MANIFEST_BYTES, MAX_REFERENCE_VIEWS, clip_name, fps_value, number, prepare_clip, sample_video
+        from dynamic import MAX_CLIP_FRAMES, MAX_CLIP_MANIFEST_BYTES, MAX_LOCAL_CLIP_BYTES, MAX_MULTIVIEW_MANIFEST_BYTES, MAX_REFERENCE_VIEWS, clip_name, fps_value, number, prepare_clip, sample_video
 
         workspace = self.ensure()
         if not isinstance(payload, dict):
@@ -1277,7 +1277,7 @@ class WorkspaceGateway:
             cameras = read_document(project_path(spec["camera_manifest_path"], base))
             fixed_camera = cameras.get("camera")
             entries = cameras.get("frames", [])
-            if fixed_camera is None and (not isinstance(entries, list) or not 1 <= len(entries) <= 600):
+            if fixed_camera is None and (not isinstance(entries, list) or not 1 <= len(entries) <= MAX_CLIP_FRAMES):
                 raise APIError(400, "camera manifest needs camera or timed frames")
             timed = []
             if fixed_camera is None:
@@ -1334,8 +1334,8 @@ class WorkspaceGateway:
                 source_type = "video"
             else:
                 entries = spec["frames"]
-                if not isinstance(entries, list) or not 1 <= len(entries) <= 600:
-                    raise APIError(400, "clip manifest must contain 1 to 600 frames")
+                if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_CLIP_FRAMES:
+                    raise APIError(400, f"clip manifest must contain 1 to {MAX_CLIP_FRAMES} frames")
                 frames = []
                 for entry in entries:
                     if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):

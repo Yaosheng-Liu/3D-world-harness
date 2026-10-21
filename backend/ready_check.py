@@ -214,7 +214,7 @@ def check_saved_workspace(name: str, source: Path, format: str, data_dir: Path,
     A repeated import restores edited managed evidence. Checking the original
     export instead would both reject good saved edits and miss damaged assets.
     """
-    from dynamic import MAX_LOCAL_CLIP_BYTES, MAX_REFERENCE_VIEWS, prepare_clip, reference_views
+    from dynamic import MAX_CLIP_FRAMES, MAX_LOCAL_CLIP_BYTES, MAX_REFERENCE_VIEWS, prepare_clip, reference_views
 
     checks = [_check("pass", "preserved_scene", "复用已保存的场景和参考数据；原始导入文件不会覆盖当前编辑。")]
     metrics: dict[str, Any] = {"static_image_count": 0, "view_count": 0, "frame_count": 0,
@@ -298,8 +298,8 @@ def check_saved_workspace(name: str, source: Path, format: str, data_dir: Path,
             for view in views:
                 if not isinstance(view, dict) or not all(field in view for field in ("name", "fps", "duration_sec", "frames")):
                     raise APIError(400, "saved reference view is missing required metadata")
-                if not isinstance(view["frames"], list) or not 1 <= len(view["frames"]) <= 600:
-                    raise APIError(400, "saved reference view must contain 1 to 600 frames")
+                if not isinstance(view["frames"], list) or not 1 <= len(view["frames"]) <= MAX_CLIP_FRAMES:
+                    raise APIError(400, f"saved reference view must contain 1 to {MAX_CLIP_FRAMES} frames")
                 local_frames = []
                 for frame in view["frames"]:
                     if not isinstance(frame, dict) or "time_sec" not in frame:

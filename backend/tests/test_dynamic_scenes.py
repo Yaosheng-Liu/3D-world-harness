@@ -99,6 +99,22 @@ class DynamicSceneTests(unittest.TestCase):
             self.gateway.set_reference_clip_paths({"manifest_path": str(manifest)})
         self.assertEqual(self.store.get_session(self.session)["reference_clip"], clip)
 
+    def test_ten_fps_long_clip_keeps_all_timestamps(self):
+        from ready_import import _validate_reference_manifest
+        frame = self.project / "long-frame.png"
+        frame.write_bytes(self.data)
+        manifest = self.project / "long-clip.json"
+        manifest.write_text(json.dumps({"fps": 10, "duration_sec": 120,
+            "frames": [{"path": frame.name, "time_sec": i / 10} for i in range(1200)]}))
+        _validate_reference_manifest(self.project, manifest)
+        result = self.gateway.set_reference_clip_paths({"manifest_path": str(manifest)})["reference_clip"]
+        self.assertEqual(len(result["frames"]), 1200)
+        self.assertEqual(result["frames"][935]["time_sec"], 93.5)
+        self.assertEqual(result["frames"][-1]["time_sec"], 119.9)
+        manifest.write_text(json.dumps({"frames": [{"path": frame.name}] * 1201}))
+        with self.assertRaisesRegex(APIError, "1200"):
+            _validate_reference_manifest(self.project, manifest)
+
     def test_bad_timestamps_camera_and_limits_leave_previous_clip_intact(self) -> None:
         clip = self.import_clip()
         base = {"fps": 2, "frames": [{"data_url": self.data_url, "time_sec": 0}, {"data_url": self.data_url, "time_sec": 0}]}
@@ -108,8 +124,8 @@ class DynamicSceneTests(unittest.TestCase):
         camera["intrinsics"]["width"] = 25
         with self.assertRaisesRegex(APIError, "dimensions"):
             self.store.set_reference_clip(self.session, {"frames": [{"data_url": self.data_url, "camera": camera}]})
-        with self.assertRaisesRegex(APIError, "600"):
-            self.store.set_reference_clip(self.session, {"frames": [{"data_url": self.data_url}] * 601})
+        with self.assertRaisesRegex(APIError, "1200"):
+            self.store.set_reference_clip(self.session, {"frames": [{"data_url": self.data_url}] * 1201})
         with self.assertRaisesRegex(APIError, "exceed"):
             self.store.set_reference_clip(self.session, {"frames": [{"data_url": self.data_url}]}, byte_limit=1)
         self.assertEqual(self.store.get_session(self.session)["reference_clip"], clip)
@@ -387,9 +403,9 @@ class DynamicSceneTests(unittest.TestCase):
         self.assertEqual(result["source_type"], "video")
         self.assertTrue(result["sampled"])
         self.assertEqual(len(result["frames"]), 10)
-        probe = {"format": {"format_name": "mp4", "duration": "61"}, "streams": [{"width": 24, "height": 24}]}
+        probe = {"format": {"format_name": "mp4", "duration": "121"}, "streams": [{"width": 24, "height": 24}]}
         with patch("dynamic.subprocess.run", return_value=subprocess.CompletedProcess([], 0, json.dumps(probe).encode(), b"")) as run:
-            with self.assertRaisesRegex(APIError, "exceed 600"):
+            with self.assertRaisesRegex(APIError, "exceed 1200"):
                 sample_video(video, 10)
             self.assertEqual(run.call_count, 1)
 

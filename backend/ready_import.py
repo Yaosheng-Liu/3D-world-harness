@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from core import APIError
+from dynamic import MAX_CLIP_FRAMES
 
 
 MAX_SCAN_DEPTH = 5
@@ -157,8 +158,8 @@ def _validate_reference_manifest(root: Path, path: Path, *, depth: int = 0, grou
             _scoped_file(root, spec[source], base=base)
         else:
             frames = spec["frames"]
-            if not isinstance(frames, list) or not 1 <= len(frames) <= 600:
-                raise APIError(400, "reference view must contain 1 to 600 frames")
+            if not isinstance(frames, list) or not 1 <= len(frames) <= MAX_CLIP_FRAMES:
+                raise APIError(400, f"reference view must contain 1 to {MAX_CLIP_FRAMES} frames")
             for frame in frames:
                 if not isinstance(frame, dict):
                     raise APIError(400, "reference frame must be an object")
