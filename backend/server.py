@@ -770,6 +770,7 @@ def _make_server_unlocked(
                     child_store._save()
             child_gateway = WorkspaceGateway(child_store, child_project, external_review=external_review, feedback_transport=feedback_transport)
             child_gateway.imported_workspace = imported
+            child_gateway.import_cli_autoconnect = imported and enable_codex and not external_review
             context = ProjectContext(record["project_id"], record["name"], child_store, child_gateway, child_lock)
             configure_context(context)
             child_workspace = child_gateway.ensure()
@@ -778,11 +779,19 @@ def _make_server_unlocked(
             target_id = child_workspace.get("thread_id")
             if imported and not target_id:
                 child_store.workspace_agent(status="external_idle", error=None)
-            if not imported and enable_codex and not external_review:
+            if enable_codex and not external_review:
                 from appserver_adapter import CodexAppServerAdapter
                 thread_path = child_data / "codex_app_server_thread.json"
+                connection_path = child_data / "cli_import_connection.json"
                 # Do not silently retry an interrupted thread/start without a persisted ID.
-                if newly_created or thread_path.is_file():
+                missing_import_thread = imported and not thread_path.is_file() and (
+                    bool(target_id) or connection_path.exists())
+                if missing_import_thread:
+                    child_gateway.import_cli_autoconnect = False
+                    child_store.workspace_agent(status="disconnected", error=(
+                        "Imported CLI conversation is unconfirmed or its saved thread file is missing; "
+                        "inspect Codex and restore the thread record before reconnecting."))
+                elif imported or newly_created or thread_path.is_file():
                     spec = record.get("creation_spec", {})
                     permission = spec.get("permission_mode", "workspace_write")
                     child_gateway.adapter = CodexAppServerAdapter(

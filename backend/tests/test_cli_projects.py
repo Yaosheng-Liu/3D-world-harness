@@ -43,9 +43,9 @@ class CLIProjectTests(unittest.TestCase):
         self.adapter_patch.start()
         self.start_server()
 
-    def start_server(self):
+    def start_server(self, *, enable_codex=True):
         self.server = server_module.make_server(port=0, project_dir=self.project, data_dir=self.data,
-            web_dir=Path(__file__).resolve().parents[2] / 'web', enable_codex=True)
+            web_dir=Path(__file__).resolve().parents[2] / 'web', enable_codex=enable_codex)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.root_context = self.server.project_registry.root
@@ -64,6 +64,107 @@ class CLIProjectTests(unittest.TestCase):
 
     def wire(self, method):
         return [entry['params'] for entry in map(json.loads, self.log.read_text().splitlines()) if entry.get('method') == method]
+
+    def ready_fixture(self):
+        from PIL import Image
+        from test_folder_import import glb_bytes
+        source = self.root / 'import-source'
+        source.mkdir()
+        (source / 'scene.glb').write_bytes(glb_bytes())
+        Image.new('RGB', (24, 24), 'blue').save(source / 'frame.png')
+        (source / 'workbench-ready.json').write_text(json.dumps({
+            'schema_version': 1, 'name': 'Imported room', 'glb': 'scene.glb',
+            'reference_images': ['frame.png'],
+        }))
+        return source
+
+    def import_source(self, source):
+        status, result, _ = self.request('POST', '/api/projects/import-folder',
+            {'path': str(source), 'request_id': uuid.uuid4().hex},
+            capability=self.root_context.store.browser_token)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result['errors'], [], result)
+        return self.server.project_registry.get(result['projects'][0]['project_id'])
+
+    def test_cli_import_connects_once_and_reuses_thread_after_restart_and_reload(self):
+        source = self.ready_fixture()
+        before = {p.name: p.read_bytes() for p in source.iterdir()}
+        child = self.import_source(source)
+        thread_id = child.store.workspace()['thread_id']
+        self.assertTrue(thread_id)
+        self.assertNotEqual(thread_id, self.root_context.store.workspace()['thread_id'])
+        self.assertEqual(child.store.workspace()['agent']['status'], 'idle')
+        self.assertTrue(child.gateway.state()['model_settings_supported'])
+        self.assertEqual(len(self.wire('thread/start')), 2)
+        self.assertEqual(self.wire('turn/start'), [])
+        params = self.wire('thread/start')[-1]
+        self.assertEqual(params['cwd'], str(source))
+        self.assertEqual((params['sandbox'], params['approvalPolicy']), ('workspace-write', 'on-request'))
+        env = params['config']['mcp_servers']['scene_feedback']['env']
+        self.assertEqual(env['SCENE_FEEDBACK_DATA_DIR'], str(child.store.data_dir))
+        self.assertEqual(self.import_source(source).store.workspace()['thread_id'], thread_id)
+        project_id = child.project_id
+        self.stop_server(); self.start_server()
+        child = self.server.project_registry.get(project_id)
+        self.assertEqual(child.store.workspace()['thread_id'], thread_id)
+        self.assertEqual(len(self.wire('thread/start')), 2)
+        self.assertEqual(self.request('DELETE', '/api/projects/' + project_id,
+            capability=self.root_context.store.browser_token)[0], 200)
+        self.assertEqual(self.import_source(source).store.workspace()['thread_id'], thread_id)
+        self.assertEqual(len(self.wire('thread/start')), 2)
+        self.assertEqual({p.name: p.read_bytes() for p in source.iterdir()}, before)
+
+    def test_legacy_cli_import_backfills_connection_and_delivers_saved_feedback_once(self):
+        self.stop_server(); self.start_server(enable_codex=False)
+        child = self.import_source(self.ready_fixture())
+        self.assertIsNone(child.gateway.adapter)
+        session = child.store.workspace()['session_id']
+        packet = child.gateway.submit(session, {'idempotency_key': 'legacy-import-feedback-0001',
+            'scene_revision': child.store.scene()['revision'], 'note': 'Continue the room.'})
+        project_id = child.project_id
+        self.assertEqual(self.wire('turn/start'), [])
+        self.stop_server(); self.start_server()
+        child = self.server.project_registry.get(project_id)
+        until(lambda: child.store.workspace()['queue'][-1]['status'] == 'completed')
+        thread_id = child.store.workspace()['thread_id']
+        self.assertEqual(child.store.workspace()['session_id'], session)
+        self.assertEqual(child.store.workspace()['queue'][-1]['feedback_id'], packet['feedback_id'])
+        self.assertEqual(len(self.wire('turn/start')), 1)
+        self.assertEqual(self.wire('turn/start')[0]['threadId'], thread_id)
+        self.stop_server(); self.start_server()
+        self.assertEqual(len(self.wire('turn/start')), 1)
+        self.assertEqual(self.server.project_registry.get(project_id).store.workspace()['thread_id'], thread_id)
+
+    def test_import_connection_failure_keeps_scene_and_does_not_recreate_unconfirmed_thread(self):
+        source = self.ready_fixture()
+        with patch.object(CodexAppServerAdapter, 'start', side_effect=RuntimeError('thread/start outcome unknown')):
+            child = self.import_source(source)
+        self.assertEqual(child.store.workspace()['agent']['status'], 'disconnected')
+        self.assertTrue(child.store.scene()['objects'])
+        self.assertTrue((child.store.data_dir / 'cli_import_connection.json').is_file())
+        project_id = child.project_id
+        self.stop_server(); self.start_server()
+        child = self.server.project_registry.get(project_id)
+        self.assertIsNone(child.gateway.adapter)
+        self.assertIsNone(child.store.workspace()['thread_id'])
+        self.assertEqual(child.store.workspace()['agent']['status'], 'disconnected')
+        self.assertIn('unconfirmed', child.store.workspace()['agent']['error'])
+        self.assertEqual(len(self.wire('thread/start')), 1)
+        self.assertTrue(child.store.scene()['objects'])
+
+    def test_missing_import_thread_file_preserves_saved_conversation_identity(self):
+        child = self.import_source(self.ready_fixture())
+        project_id = child.project_id
+        thread_id = child.store.workspace()['thread_id']
+        thread_path = child.store.data_dir / 'codex_app_server_thread.json'
+        self.stop_server()
+        thread_path.unlink()
+        self.start_server()
+        child = self.server.project_registry.get(project_id)
+        self.assertEqual(child.store.workspace()['thread_id'], thread_id)
+        self.assertEqual(child.store.workspace()['agent']['status'], 'disconnected')
+        self.assertIsNone(child.gateway.adapter)
+        self.assertEqual(len(self.wire('thread/start')), 2)
 
     def test_create_switch_restart_and_deliver_with_selected_settings(self):
         root = self.root_context

@@ -18,7 +18,7 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 import uuid
 
-from core import APIError, SceneStore
+from core import APIError, SceneStore, _now
 from gateway import WorkspaceGateway
 from ready_import import discover_ready_instances, host_directory, ReadyInstance
 from ready_check import check_ready_instance, check_saved_workspace, ready_check_report
@@ -614,16 +614,30 @@ class ProjectRegistry:
 
     @staticmethod
     def _start_imported_context(context: ProjectContext, *, restored: bool = False) -> None:
-        # Event delivery needs the local worker. An existing task may restore
-        # after a user explicitly bound it; a fresh import never owns an adapter.
+        # CLI services own an isolated conversation. Desktop/Events services
+        # still require explicit task binding and keep their existing route.
+        auto_cli = context.gateway.import_cli_autoconnect
         if context.gateway.adapter is not None:
             workspace = context.gateway.ensure()
             target = workspace.get("thread_id")
-            if not (restored and context.gateway.external_review and target
+            if not auto_cli and not (restored and context.gateway.external_review and target
                     and getattr(context.gateway.adapter, "thread_id", None) == target):
                 raise RuntimeError("imported scene unexpectedly has a Codex adapter")
         context.gateway.desktop_seed_thread_id = None
-        if context.gateway.external_review or context.gateway.feedback_transport == "mcp_events":
+        if auto_cli:
+            connection_path = context.store.data_dir / "cli_import_connection.json"
+            # Persist intent before the RPC. After a crash without a saved ID,
+            # the factory leaves a visible error instead of creating duplicates.
+            if not (context.store.data_dir / "codex_app_server_thread.json").is_file():
+                connection_path.write_text(json.dumps({"status": "starting", "at": _now()}))
+            context.gateway.start()
+            workspace = context.store.workspace()
+            connection_path.write_text(json.dumps({
+                "status": "connected" if workspace.get("thread_id") else "unconfirmed",
+                "thread_id": workspace.get("thread_id"), "at": _now(),
+                "error": workspace.get("agent", {}).get("error"),
+            }))
+        elif context.gateway.external_review or context.gateway.feedback_transport == "mcp_events":
             context.gateway.start()
 
     def _source_record(self, source: Path) -> dict[str, Any] | None:
@@ -719,6 +733,7 @@ class ProjectRegistry:
         except FileExistsError as exc:
             raise APIError(409, "managed import data already exists; inspect it before importing this source") from exc
         context = None
+        published = False
         try:
             context = self._factory(record, True)
             self._configure(context)
@@ -730,7 +745,7 @@ class ProjectRegistry:
                 or workspace.get("thread_id") or workspace.get("created_thread_ids")
                 or workspace.get("queue") or context.store.scene().get("objects")):
                 raise RuntimeError("folder import requires a fresh isolated scene context without Codex activity")
-            if context.gateway.adapter is not None:
+            if context.gateway.adapter is not None and not context.gateway.import_cli_autoconnect:
                 raise RuntimeError("folder import cannot use a Codex adapter")
             if instance.manifest is not None:
                 clip_payload = {"manifest_path": str(instance.manifest)}
@@ -753,7 +768,8 @@ class ProjectRegistry:
                     "op": "update", "object_id": model["object"]["id"],
                     "fields": {"metadata": {**model["object"].get("metadata", {}), "up_axis": up_axis}},
                 }])
-            self._start_imported_context(context)
+            if not context.gateway.import_cli_autoconnect:
+                self._start_imported_context(context)
             with self._lock:
                 if self._closed:
                     raise APIError(503, "reconstruction service is closing")
@@ -765,12 +781,23 @@ class ProjectRegistry:
                     self._refresh_creation(context)
                     metadata = self.metadata(context)
                     self._save()
+                    published = True
                 except BaseException:
                     self._records.pop(project_id, None)
                     self._contexts.pop(project_id, None)
                     raise
+            if context.gateway.import_cli_autoconnect:
+                # Publish the validated scene first. A failed connection keeps
+                # its scene, evidence, saved intent and thread ID recoverable.
+                self._start_imported_context(context)
+                with self._lock:
+                    self._refresh_creation(context)
+                    self._save()
+                    metadata = self.metadata(context)
             return metadata, True
         except BaseException:
+            if published:
+                raise
             self._close_import_context(context)
             # This method created base exclusively and only deletes its own
             # managed data; the original instance and editable blend stay intact.

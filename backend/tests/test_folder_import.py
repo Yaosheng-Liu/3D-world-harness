@@ -1,4 +1,4 @@
-"""Ready directory imports isolate scene data and never create model tasks."""
+"""Ready imports isolate data; Desktop/Events and services without CLI stay unbound."""
 
 from __future__ import annotations
 
@@ -631,7 +631,7 @@ class FolderImportTests(unittest.TestCase):
         self.assertEqual(context.gateway.feedback_transport, "mcp_events")
         self.assert_no_tasks()
 
-    def test_cli_service_import_has_no_model_adapter_or_automatic_start(self):
+    def test_service_without_cli_adapter_does_not_start_an_agent_on_import(self):
         self.registry.close()
         self.data = self.root / "cli-service-data"
         self.external_review = False

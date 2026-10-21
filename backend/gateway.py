@@ -35,6 +35,8 @@ class WorkspaceGateway:
         self.store = store
         self.project_dir = Path(project_dir).expanduser().resolve()
         self.adapter = adapter
+        # Enabled only by the CLI service factory, never by imported metadata.
+        self.import_cli_autoconnect = False
         self.external_review = external_review
         self.desktop_seed_thread_id = desktop_seed_thread_id
         self.thread_config = copy.deepcopy(thread_config)
@@ -202,6 +204,16 @@ class WorkspaceGateway:
             with self.store.lock:
                 workspace = self.store.state["workspace"]
                 active_id = workspace.get("active_feedback_id")
+                if self.import_cli_autoconnect:
+                    # Legacy imports could accept feedback before owning a
+                    # conversation. Bind only never-dispatched, unbound work;
+                    # preserve explicit targets and all uncertain deliveries.
+                    for queued in workspace["queue"]:
+                        if (queued["status"] == "queued" and not queued.get("turn_id")
+                                and queued.get("target_thread_id") is None
+                                and queued.get("feedback_transport") != "mcp_events"):
+                            queued["target_thread_id"] = thread_id
+                    self.store._save()
                 workspace["approvals"] = []
                 if self.external_review and bound_task_idle:
                     for queued in workspace["queue"]:
