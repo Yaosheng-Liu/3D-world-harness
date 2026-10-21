@@ -23,6 +23,17 @@ export function setupWorkspaceChrome({getState, setMode, activateToolPane, revea
   let settleTimer = null;
   let geometrySettling = false;
   let placed = null;
+  let preferredPlacement = 'top';
+  try { if (localStorage.getItem('astra-annotation-placement') === 'right') preferredPlacement = 'right'; } catch {}
+  const placementSelect = byId('annotation-placement');
+  placementSelect.value = preferredPlacement;
+  placementSelect.addEventListener('change', () => {
+    preferredPlacement = placementSelect.value === 'right' ? 'right' : 'top';
+    try { localStorage.setItem('astra-annotation-placement', preferredPlacement); } catch {}
+    placed = null;
+    byId('more-tools').open = false;
+    schedulePosition();
+  });
   const automatic = {
     reference:{stage:referenceStage,media:[referenceMedia],upperHover:false,pointer:null,touch:false,dismissed:false,suppressFocus:false},
     scene:{stage:sceneStage,media:[sceneViewport,sceneMedia],upperHover:false,pointer:null,touch:false,dismissed:false,suppressFocus:false}
@@ -104,7 +115,7 @@ export function setupWorkspaceChrome({getState, setMode, activateToolPane, revea
     if (upper) return true;
     const areas = spareAreas(pane);
     // Keep the familiar top entry; a larger letterbox also stays an entry area.
-    return ['top','right'].some(side => {
+    return (preferredPlacement === 'right' ? ['top','right'] : ['top']).some(side => {
       const area = areas[side];
       return area.right - area.left >= (side === 'right' ? 64 : 120) && area.bottom - area.top >= (side === 'right' ? 280 : 32) &&
         pointer.clientX >= area.left && pointer.clientX <= area.right && pointer.clientY >= area.top && pointer.clientY <= area.bottom;
@@ -134,11 +145,7 @@ export function setupWorkspaceChrome({getState, setMode, activateToolPane, revea
           fits:width >= bounds.width && height >= bounds.height,
           score:Math.min(width / bounds.width,height / bounds.height)};
       };
-      const row = measure('top'), column = measure('right');
-      let chosen = row.fits && column.fits ? (column.score > row.score ? column : row) : column.fits ? column : row;
-      const previous = placed?.pane === target && (placed.placement === 'right' ? column : row);
-      // Keep a fitting side through small changes near the decision boundary.
-      if (previous?.fits && chosen.fits && chosen.score < previous.score + .15) chosen = previous;
+      const chosen = measure(preferredPlacement);
       dock.dataset.placement = chosen.placement;
       dock.classList.toggle('is-compact', chosen.placement === 'right' || availableWidth < 780);
       rect = {width:dock.offsetWidth,height:dock.offsetHeight};

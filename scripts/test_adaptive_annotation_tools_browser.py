@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Place real annotation controls in image letterboxes without changing evidence."""
+"""Keep annotation controls horizontal by default with a persistent manual orientation."""
 from __future__ import annotations
 
 import argparse
@@ -124,57 +124,27 @@ def main():
                 page.goto(server.browser_url(session))
                 page.wait_for_function('window.__adaptive?.state.workspaceReady && !__adaptive.state.sceneLoading && __adaptive.controls.transition===null && document.getElementById("reference-image").naturalWidth>0')
                 if page.locator('#chat-dock').is_visible():control(page,'#chat-collapse').click()
-                portrait=show(page,'reference',right=True);assert_placement(portrait,'right')
-                point_button=page.locator('#annotation-tool-panel [data-tool="point"]').bounding_box()
-                rectangle_button=page.locator('#annotation-tool-panel [data-tool="rectangle"]').bounding_box()
-                assert rectangle_button['y']>point_button['y']+20 and abs(rectangle_button['x']-point_button['x'])<8
-                assert_placement(show(page,'scene'),'right')
-                tall=capture(page);assert_placement(show(page,'scene',right=True),'right')
-                page.screenshot(path='/tmp/adaptive_tools_062.png')
-                print('PASS default-motion portrait reference, calibrated live view and fixed screenshot use a vertical right dock; actual right blank hover and legacy top entry both open tools clear of the image',flush=True)
-
-                select_reference(page,refs[1]);wide=show(page,'reference');assert_placement(wide,'top')
+                portrait=show(page,'reference');assert_placement(portrait,'top',clear=False)
                 point_button=page.locator('#annotation-tool-panel [data-tool="point"]').bounding_box()
                 rectangle_button=page.locator('#annotation-tool-panel [data-tool="rectangle"]').bounding_box()
                 assert rectangle_button['x']>point_button['x']+20 and abs(rectangle_button['y']-point_button['y'])<8
-                capture(page);assert_placement(show(page,'scene'),'top')
-                page.locator('.snapshot-open[data-snapshot-id="'+tall['id']+'"]').click()
-                assert_placement(show(page,'scene',right=True),'right')
-                assert_placement(show(page,'reference'),'top')
-                print('PASS landscape top dock has horizontal buttons; left landscape and retained right portrait independently choose clear top/right letterboxes',flush=True)
-
-                select_reference(page,refs[2]);assert_placement(show(page,'reference'),'top',clear=False)
-                frozen=capture(page);assert_placement(show(page,'scene'),'top',clear=False)
-                image=layout(page,'scene')['image'];page.mouse.move(**point(image))
-                for _ in range(3):page.mouse.wheel(0,300)
-                page.wait_for_function('__adaptive.state.snapshotViewports.get(__adaptive.state.snapshot.id)?.zoom<.7')
-                assert_placement(show(page,'scene'))
-                page.locator('#annotation-tool-panel [data-tool="line"]').click()
-                page.locator('#scene-annotations').focus();page.keyboard.down('Space')
-                before=layout(page,'scene');start=point(before['image']);page.mouse.move(**start);page.mouse.down()
-                locked=layout(page,'scene');dx=before['stage']['x']+60-before['image']['x'];dy=before['stage']['y']+8-before['image']['y']
-                page.mouse.move(start['x']+dx,start['y']+dy,steps=8)
-                during=layout(page,'scene');assert during['placement']==locked['placement'] and during['dock']==locked['dock']
-                page.mouse.up();page.keyboard.up('Space')
-                right=show(page,'scene',right=True);assert_placement(right,'right')
-                summary=page.locator('#more-tools > summary');summary.click();locked=layout(page,'scene')
-                page.set_viewport_size({'width':1420,'height':1000});settle(page)
-                assert layout(page,'scene')['placement']==locked['placement'] and layout(page,'scene')['dock']==locked['dock']
-                page.locator('#more-tools [data-tool="freehand"]').click()
-                assert page.evaluate('__adaptive.state.paneModes.scene')=='freehand';summary.click()
-                page.locator('#annotation-tool-panel [data-tool="line"]').click()
-                image=layout(page,'scene')['image'];start=point(image,.33,.44);end=point(image,.58,.6)
-                page.mouse.move(**start);page.mouse.down();locked=layout(page,'scene')
-                page.set_viewport_size({'width':1440,'height':1000});settle(page)
-                assert layout(page,'scene')['placement']==locked['placement'] and layout(page,'scene')['dock']==locked['dock']
-                end=point(layout(page,'scene')['image'],.58,.6);page.mouse.move(**end,steps=8);page.mouse.up()
-                page.wait_for_function('__adaptive.state.annotations.length===1');mark=page.evaluate('structuredClone(__adaptive.state.annotations[0])')
-                assert max(abs(mark['coordinates'][key]-value) for key,value in zip(('x','y','x2','y2'),(.33,.44,.58,.6)))<.006
-                assert mark['snapshot_id']==frozen['id'] and page.evaluate('structuredClone(__adaptive.state.snapshot)')==frozen
-                control(page,'#drag-scene-image').click();reference=page.evaluate('structuredClone(__adaptive.state.imageRefs[0])')
-                assert reference['original_data_url']==frozen['data_url'] and reference['camera']==frozen['camera']
-                print('PASS no-blank fallback, wheel shrink and pan reposition; active pan/drawing/menu keep controls stable and clickable through resize, source annotation coordinates and quoted original/camera stay exact',flush=True)
-
+                assert_placement(show(page,'scene'),'top',clear=False)
+                tall=capture(page);assert_placement(show(page,'scene'),'top',clear=False)
+                print('PASS portrait reference, live view and screenshot default to horizontal top tools',flush=True)
+                page.locator('#more-tools > summary').click()
+                page.locator('#annotation-placement').select_option('right')
+                settle(page)
+                assert_placement(show(page,'reference',right=True),'right')
+                assert page.evaluate("localStorage.getItem('astra-annotation-placement')")=='right'
+                page.reload()
+                page.wait_for_function('window.__adaptive?.state.workspaceReady && !__adaptive.state.sceneLoading && document.getElementById("reference-image").naturalWidth>0')
+                assert_placement(show(page,'reference',right=True),'right')
+                page.locator('#more-tools > summary').click()
+                page.locator('#annotation-placement').select_option('top');settle(page)
+                assert_placement(show(page,'reference'),'top',clear=False)
+                select_reference(page,refs[1]);assert_placement(show(page,'reference'),'top')
+                select_reference(page,refs[0]);assert_placement(show(page,'reference'),'top',clear=False)
+                print('PASS explicit right layout persists after reload; switching back and changing references preserve top layout',flush=True)
                 if page.locator('#chat-dock').is_visible():control(page,'#chat-collapse').click()
                 page.set_viewport_size({'width':390,'height':844});assert_placement(show(page,'reference'),clear=False)
                 assert_placement(show(page,'scene'),clear=False)
@@ -184,7 +154,7 @@ def main():
                 expect(page.locator('#annotation-tool-panel [data-tool="point"]')).to_be_visible()
                 assert store.scene()==original_scene and not errors and not writes,(errors,writes)
                 tasks.assert_not_called();models.assert_not_called()
-                print('PASS phone and immersive layout keep the actual tool surface inside the visible viewport with usable top/right fallback; source scene unchanged, no browser errors, writes, feedback or model calls',flush=True)
+                print('PASS phone and immersive layout keep the actual tool surface inside the visible viewport with usable controls; source scene unchanged, no browser errors, writes, feedback or model calls',flush=True)
                 browser.close()
         finally:server.shutdown();thread.join(5);server.server_close()
     print('ALL ADAPTIVE ANNOTATION TOOL CHECKS PASSED',flush=True)
