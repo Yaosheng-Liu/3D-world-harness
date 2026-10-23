@@ -77,6 +77,19 @@ class WorldBuildTests(unittest.TestCase):
                 worker.assert_not_called()
             self.assertEqual(list(outside.iterdir()), [])
 
+    def test_reference_dimensions_must_match_the_camera(self):
+        from PIL import Image
+        Image.new("RGB", (8, 6)).save(self.project / "reference.png")
+        candidate = copy.deepcopy(self.scene)
+        candidate["views"] = [{"id":"measured", "camera_to_world":[[1,0,0,0],[0,1,0,0],[0,0,1,3],[0,0,0,1]],
+                               "intrinsics":{"width":16,"height":12,"fx":10,"fy":10,"cx":8,"cy":6},
+                               "reference_image":"reference.png"}]
+        with patch("world_build.shutil.which", return_value="/usr/bin/blender"), patch("world_build.subprocess.run") as worker:
+            with self.assertRaisesRegex(WorldError, "Reference image size"):
+                build_world(self.project, scene=candidate)
+            worker.assert_not_called()
+        self.assertFalse((self.project / "world" / "builds").exists())
+
     def test_missing_runtime_creates_no_failed_revision(self):
         with patch("world_build.shutil.which", return_value=None):
             with self.assertRaisesRegex(WorldError, "Blender executable not found"):

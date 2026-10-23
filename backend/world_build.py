@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 
 from core import APIError, SceneStore
-from world_model import WorldError, WorldStore, scene_hash, validate_scene
+from world_model import WorldError, WorldStore, scene_hash, source_paths, validate_scene
 
 
 WORKER = Path(__file__).resolve().parents[1] / "scripts" / "world_blender.py"
@@ -55,7 +55,8 @@ def validate_trajectory(trajectory: dict, scene: dict) -> None:
                 raise WorldError(f"trajectory quaternion must be normalized for {object_id}")
 
 
-def inspect_glb(path: Path, expected_ids: set[str], parents: dict[str, str | None] | None = None) -> dict:
+def inspect_glb(path: Path, expected_ids: set[str], parents: dict[str, str | None] | None = None,
+                *, textured_ids=(), captured_ids=()) -> dict:
     """Reuse the publish gate, then check the stable object identity contract."""
     SceneStore._validate_glb_source(str(path))
     with path.open("rb") as handle:
@@ -76,8 +77,27 @@ def inspect_glb(path: Path, expected_ids: set[str], parents: dict[str, str | Non
                           if node_ids[child] in expected_ids}
         if any(actual_parents.get(object_id) != parent for object_id, parent in parents.items()):
             raise WorldError("GLB object hierarchy differs from the world document")
+    textured_ids, captured_ids = set(textured_ids), set(captured_ids)
+    images = document.get("images", [])
+    if any("uri" in image or "bufferView" not in image for image in images):
+        raise WorldError("World GLB images must be embedded")
+    for node in nodes:
+        object_id = node.get("extras", {}).get("object_id")
+        if object_id not in textured_ids | captured_ids:
+            continue
+        for primitive in document["meshes"][node["mesh"]]["primitives"]:
+            material = document["materials"][primitive["material"]]
+            if object_id in captured_ids and "KHR_materials_unlit" not in material.get("extensions", {}):
+                raise WorldError("Captured appearance must remain unlit in the GLB")
+            if object_id in textured_ids:
+                texture = material.get("pbrMetallicRoughness", {}).get("baseColorTexture")
+                if texture is None or "TEXCOORD_0" not in primitive["attributes"]:
+                    raise WorldError("Textured GLB mesh lost its base color texture or UV coordinates")
+                image = document["textures"][texture["index"]]["source"]
+                if image >= len(images):
+                    raise WorldError("Textured GLB mesh has no embedded image")
     preview = {"object_ids": sorted(ids), "animation_count": len(document.get("animations", [])),
-               "node_count": len(nodes)}
+               "node_count": len(nodes), "embedded_image_count": len(images)}
     if document.get("animations"):
         times, animated_ids = [], set()
         for animation in document["animations"]:
@@ -110,11 +130,16 @@ def build_world(project_dir: str | Path, *, blender: str = "blender", render: bo
         raise WorldError(f"Blender executable not found: {blender}")
     if trajectory is not None:
         validate_trajectory(trajectory, scene)
+    from PIL import Image
+    for view in scene["views"]:
+        if "reference_image" in view:
+            with Image.open(project / view["reference_image"]) as image:
+                if image.size != (view["intrinsics"]["width"], view["intrinsics"]["height"]):
+                    raise WorldError(f"Reference image size differs from camera intrinsics: {view['id']}")
     digest = scene_hash(scene)
     output = WorldStore(project).storage_path("builds", f"r{scene['revision']:04d}-{digest[:12]}-{uuid.uuid4().hex[:8]}")
     output.mkdir(parents=True)
-    sources = {shape["path"]: file_hash(project / shape["path"])
-               for obj in scene["objects"] for shape in obj["visual"] if shape["type"] == "mesh"}
+    sources = {path: file_hash(project / path) for path in source_paths(scene)}
     job = {"scene": scene, "scene_hash": digest, "project_dir": str(project), "output_dir": str(output),
            "render": render, "trajectory": trajectory, "asset_hashes": sources}
     job_path = output / "job.json"
@@ -134,7 +159,9 @@ def build_world(project_dir: str | Path, *, blender: str = "blender", render: bo
         blend_path, glb_path = output / "scene.blend", output / "scene.glb"
         if not blend_path.is_file() or blend_path.stat().st_size == 0:
             raise WorldError("Blender did not produce an editable source file")
-        preview = inspect_glb(glb_path, expected_ids, {obj["id"]: obj["parent_id"] for obj in scene["objects"]})
+        preview = inspect_glb(glb_path, expected_ids, {obj["id"]: obj["parent_id"] for obj in scene["objects"]},
+                              textured_ids={obj["id"] for obj in scene["objects"] if "base_color_texture" in obj["material"]},
+                              captured_ids={obj["id"] for obj in scene["objects"] if obj["material"].get("appearance") == "captured"})
         if trajectory is not None and preview["animation_count"] != 1:
             raise WorldError("simulation GLB must contain one synchronized animation")
         if trajectory is not None and (abs(preview["animation_start_sec"]) > 1e-6
@@ -148,7 +175,6 @@ def build_world(project_dir: str | Path, *, blender: str = "blender", render: bo
             if not moving <= set(preview["animated_object_ids"]):
                 raise WorldError("simulation GLB is missing an object motion channel")
         render_paths = [output / "renders" / f"{view['id']}.png" for view in scene["views"]] if render else []
-        from PIL import Image
         for path in render_paths:
             with Image.open(path) as image:
                 image.verify()

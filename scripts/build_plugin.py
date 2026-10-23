@@ -30,7 +30,8 @@ FIXED_FILES = (
     "scripts/start_blank_workbench.py",
     "scripts/check_workbench_ready.py",
     "docs/physical-world.md", "scripts/world.py", "scripts/world_blender.py",
-    "examples/physical_world/scene.json",
+    "examples/physical_world/scene.json", "docs/multiview-reconstruction.md",
+    "scripts/reconstruct_multiview.py", "scripts/multiview_uv.py",
 )
 
 

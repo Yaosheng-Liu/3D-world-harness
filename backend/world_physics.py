@@ -35,6 +35,8 @@ def _volume(shape: dict) -> float:
 def export_mjcf(scene: dict, project_dir: Path | None = None) -> str:
     """Export collision-only MJCF; dimensions are full extents in source JSON."""
     validate_scene(scene, project_dir)
+    if scene["units"] != "m":
+        raise WorldError("Physics requires measured or explicitly calibrated metre units; arbitrary-scale worlds cannot be simulated")
     root = ET.Element("mujoco", model=scene["scene_id"])
     ET.SubElement(root, "compiler", angle="radian", eulerseq="XYZ", inertiafromgeom="true")
     option = ET.SubElement(root, "option", timestep=str(TIMESTEP), gravity="0 0 -9.81",

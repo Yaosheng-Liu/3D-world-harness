@@ -45,6 +45,13 @@ def falling_scene(mass=1):
 
 
 class PhysicsValidationTests(unittest.TestCase):
+    def test_arbitrary_scale_cannot_enter_physics(self):
+        world = falling_scene()
+        world["units"] = "arbitrary"
+        for operation in (export_mjcf, simulate):
+            with self.subTest(operation=operation.__name__), self.assertRaisesRegex(WorldError, "arbitrary-scale"):
+                operation(world)
+
     def test_invalid_runs_fail_before_loading_optional_engine(self):
         for options in ({"duration_sec": 11}, {"duration_sec": float("nan")}, {"sample_hz": 61},
                         {"duration_sec": True}, {"action": {"type": "teleport"}},

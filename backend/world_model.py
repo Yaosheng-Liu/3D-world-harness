@@ -1,4 +1,4 @@
-"""Object-level, metre/Z-up world documents and revision-checked transactions."""
+"""Object-level Z-up world documents and revision-checked transactions."""
 from contextlib import contextmanager
 from copy import deepcopy
 import fcntl
@@ -56,7 +56,9 @@ _OBJECT = _record({
     "id": _ID, "name": _TEXT,
     "parent_id": {"anyOf": [_ID, {"type": "null"}]}, **_TRANSFORM,
     "visual": _shapes(_SHAPES), "collision": _shapes(("box", "sphere", "cylinder")),
-    "material": _record({"base_color": _vector(4, _UNIT), "roughness": _UNIT, "metallic": _UNIT}),
+    "material": _record({"base_color": _vector(4, _UNIT), "roughness": _UNIT, "metallic": _UNIT,
+                         "base_color_texture": _TEXT, "appearance": {"enum": ["surface", "captured"]}},
+                        ["base_color", "roughness", "metallic"]),
     "physics": _record({"body_type": {"enum": ["static", "dynamic"]},
                         "mass": _NONNEGATIVE, "friction": _NONNEGATIVE}),
     "evidence": _record({"geometry": {"enum": ["measured", "observed", "estimated", "synthetic"]},
@@ -71,15 +73,21 @@ _OBJECT = _record({
 
 WORLD_SCHEMA = _record({
     "schema_version": {"const": 1}, "revision": {"type": "integer", "minimum": 1},
-    "scene_id": _ID, "name": _TEXT, "units": {"const": "m"}, "up_axis": {"const": "Z"},
+    "scene_id": _ID, "name": _TEXT, "units": {"enum": ["m", "arbitrary"]}, "up_axis": {"const": "Z"},
     "provenance": _record({"kind": {"enum": ["synthetic", "reconstruction"]},
                            "description": _TEXT,
                            "sources": {"type": "array", "items": _record({"path": _TEXT, "description": _TEXT})}}),
     "objects": {"type": "array", "minItems": 1, "items": _OBJECT},
-    "views": {"type": "array", "minItems": 1, "items": _record({
+    "views": {"type": "array", "minItems": 1, "items": {"oneOf": [_record({
         "id": _ID, "position": _VEC3, "target": _VEC3,
         "fov_y_deg": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180},
-    })},
+    }), _record({
+        "id": _ID, "camera_to_world": _vector(4, _vector(4)),
+        "intrinsics": _record({"width": {"type": "integer", "minimum": 1},
+                               "height": {"type": "integer", "minimum": 1},
+                               "fx": _POSITIVE, "fy": _POSITIVE, "cx": {"type": "number"}, "cy": {"type": "number"}}),
+        "reference_image": _TEXT,
+    })]}},
 })
 _VALIDATOR = Draft202012Validator(WORLD_SCHEMA)
 _EDITABLE_FIELDS = set(_OBJECT["properties"]) - {"id"}
@@ -105,6 +113,15 @@ def resolve_source_path(path, project_dir=None):
     if not result.is_file():
         raise WorldError(f"Source file does not exist: {path}")
     return result
+
+
+def source_paths(scene):
+    """All explicit dependencies whose bytes must remain bound to a build."""
+    paths = {source["path"] for source in scene["provenance"]["sources"]}
+    paths.update(shape["path"] for obj in scene["objects"] for shape in obj["visual"] if shape["type"] == "mesh")
+    paths.update(obj["material"]["base_color_texture"] for obj in scene["objects"] if "base_color_texture" in obj["material"])
+    paths.update(view["reference_image"] for view in scene["views"] if "reference_image" in view)
+    return sorted(paths)
 
 
 def validate_scene(scene, project_dir=None):
@@ -159,15 +176,29 @@ def validate_scene(scene, project_dir=None):
             if shape["type"] == "mesh":
                 if Path(shape["path"]).suffix.lower() != ".obj":
                     raise WorldError("Visual mesh sources must be OBJ files")
-                resolve_source_path(shape["path"], project_dir)
-    for source in scene["provenance"]["sources"]:
-        resolve_source_path(source["path"], project_dir)
+        texture = obj["material"].get("base_color_texture")
+        if texture and Path(texture).suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            raise WorldError("Base color textures must be PNG or JPEG files")
+    for path in source_paths(scene):
+        resolve_source_path(path, project_dir)
     views = scene["views"]
     if len({view["id"] for view in views}) != len(views):
         raise WorldError("View IDs must be unique")
     for view in views:
-        if view["position"] == view["target"]:
-            raise WorldError(f"{view['id']}: camera position and target must differ")
+        if "camera_to_world" not in view:
+            if view["position"] == view["target"]:
+                raise WorldError(f"{view['id']}: camera position and target must differ")
+            continue
+        matrix = view["camera_to_world"]
+        rotation = [row[:3] for row in matrix[:3]]
+        orthogonal = all(abs(sum(rotation[k][i] * rotation[k][j] for k in range(3)) - (i == j)) < 1e-5
+                         for i in range(3) for j in range(3))
+        a, b, c = rotation
+        determinant = a[0]*(b[1]*c[2]-b[2]*c[1])-a[1]*(b[0]*c[2]-b[2]*c[0])+a[2]*(b[0]*c[1]-b[1]*c[0])
+        if not orthogonal or abs(determinant - 1) > 1e-5 or matrix[3] != [0, 0, 0, 1]:
+            raise WorldError(f"{view['id']}: camera_to_world must be a rigid OpenGL camera transform")
+        if any(type(view["intrinsics"][key]) is not int for key in ("width", "height")):
+            raise WorldError("Camera width and height must be integers")
     return scene
 
 

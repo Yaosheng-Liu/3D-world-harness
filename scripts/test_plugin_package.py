@@ -63,7 +63,8 @@ class PluginPackageTests(unittest.TestCase):
             self.assertTrue(all(name.startswith(NAME + "/") for name in archive.namelist()))
             self.assertNotIn(NAME + "/backend/data/control_token", archive.namelist())
             for name in ("docs/physical-world.md", "scripts/world.py", "scripts/world_blender.py",
-                         "examples/physical_world/scene.json"):
+                         "examples/physical_world/scene.json", "docs/multiview-reconstruction.md",
+                         "scripts/reconstruct_multiview.py", "scripts/multiview_uv.py"):
                 self.assertIn(NAME + "/" + name, archive.namelist())
 
     def test_symlink_and_secret_files_are_rejected(self):

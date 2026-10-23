@@ -45,7 +45,7 @@ WORLD_TOOLS = [
           {"expected_revision": REVISION, "action": {"type": "object"},
            "duration_sec": {"type": "number", "exclusiveMinimum": 0, "maximum": 10, "default": 2},
            "sample_hz": {"type": "number", "minimum": 1, "maximum": 60, "default": 30}}, ["expected_revision"]),
-    _tool("evaluate", "Check build and optional simulation provenance against the current world. Separately reports structural checks and unmeasured visual/real-world accuracy.",
+    _tool("evaluate", "Check build and optional simulation provenance against the current world. Reports structural checks and calibrated-view image metrics when rendered references exist. These metrics do not establish physical calibration.",
           {"expected_revision": REVISION, "build_id": RUN_ID, "simulation_id": RUN_ID}, ["expected_revision", "build_id"], readonly=True),
     _tool("publish", "Publish a verified, current-world GLB through the existing scene revision guard. A physics animation with failed checks cannot be published by this tool.",
           {"expected_revision": REVISION, "expected_scene_revision": REVISION, "build_id": RUN_ID},
@@ -167,6 +167,7 @@ class WorldService:
         build = self._record("receipts", build_id)
         self._match(scene, build)
         from world_build import file_hash, inspect_glb
+        from world_evaluation import evaluate_views
 
         for name, digest in build["files"].items():
             if file_hash(self._file(str(Path(build["build_dir"]) / name))) != digest:
@@ -184,7 +185,7 @@ class WorldService:
             physics = simulation["report"]
         return {"revision": scene["revision"], "scene_hash": scene_hash(scene), "build_id": build_id,
                 "structure": {"status": "passed", "object_ids": build["object_ids"]}, "physics": physics,
-                "visual_accuracy": {"status": "not_measured", "reason": "No calibrated real reference comparison was supplied."},
+                "visual_accuracy": evaluate_views(self.project_dir, scene, build),
                 "physical_calibration": {"status": "not_measured", "reason": "Simulation checks do not establish agreement with real experiments."}}
 
     def publish(self, expected_revision, expected_scene_revision, build_id):

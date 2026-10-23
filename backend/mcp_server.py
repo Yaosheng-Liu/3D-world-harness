@@ -392,7 +392,7 @@ def workspace_simulate_world(expected_revision: int, action: dict[str, Any] | No
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False, idempotent_hint=True))
 def workspace_evaluate_world(expected_revision: int, build_id: str, simulation_id: str | None = None) -> dict[str, Any]:
-    """Check current build/source integrity and optional physics. Unmeasured visual and physical accuracy stay explicit."""
+    """Check build/source integrity, optional physics and calibrated-view RGB metrics when reference renders exist. Physical calibration remains separate."""
     return _world("evaluate", {"expected_revision": expected_revision, "build_id": build_id, "simulation_id": simulation_id})
 
 

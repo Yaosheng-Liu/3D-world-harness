@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from world_model import WorldConflict, WorldError, WorldStore, scene_hash, validate_scene
+from world_model import WorldConflict, WorldError, WorldStore, scene_hash, source_paths, validate_scene
 
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "physical_world" / "scene.json"
@@ -36,6 +36,29 @@ class WorldModelTests(unittest.TestCase):
 
     def update(self, object_id="block", **fields):
         return {"op": "update", "object_id": object_id, "fields": fields}
+
+    def calibrated_view(self):
+        return {"id": "heldout", "camera_to_world": [[0, -1, 0, 2], [1, 0, 0, 3], [0, 0, 1, 4], [0, 0, 0, 1]],
+                "intrinsics": {"width": 64, "height": 48, "fx": 50, "fy": 60, "cx": 25, "cy": 28},
+                "reference_image": "reference.png"}
+
+    def test_calibrated_cameras_texture_paths_and_arbitrary_units(self):
+        self.scene["views"] = [self.calibrated_view()]
+        self.scene["units"] = "arbitrary"
+        self.scene["objects"][0]["material"].update(base_color_texture="texture.png", appearance="captured")
+        (self.root / "reference.png").write_bytes(b"reference")
+        (self.root / "texture.png").write_bytes(b"texture")
+        self.assertEqual(self.initialize()["units"], "arbitrary")
+        self.assertEqual(source_paths(self.scene), ["reference.png", "texture.png"])
+        for mutate in (lambda s: s["views"][0]["camera_to_world"][0].__setitem__(0, 2),
+                       lambda s: s["views"][0]["camera_to_world"][3].__setitem__(0, 1),
+                       lambda s: s["views"][0]["intrinsics"].update(fx=0),
+                       lambda s: s["views"][0].update(reference_image="../escape.png"),
+                       lambda s: s["objects"][0]["material"].update(base_color_texture="texture.exr")):
+            candidate = deepcopy(self.scene)
+            mutate(candidate)
+            with self.assertRaises(WorldError):
+                validate_scene(candidate, self.root)
 
     def test_constructor_and_missing_read_do_not_create_world(self):
         self.assertFalse(self.store.directory.exists())

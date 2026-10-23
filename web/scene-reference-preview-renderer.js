@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three/build/three.module.min.js';
 import {GLTFLoader} from './vendor/three/examples/jsm/loaders/GLTFLoader.js';
+import {configureWorldMaterials} from './world-materials.js';
 import {clone as cloneSkeleton} from './vendor/three/examples/jsm/utils/SkeletonUtils.js';
 
 const ASSET=/^(?:\/p\/[0-9a-f]{32})?\/assets\/[0-9a-f]{32}\.glb$/;
@@ -40,6 +41,7 @@ export async function renderSceneReferencePreview(record,{resourceURL=(url)=>url
       layer.add(root);
       if(item.type==='model') {
         const gltf=loaded.get(item.url),model=cloneSkeleton(gltf.scene);
+        configureWorldMaterials(model);
         root.scale.fromArray(size);root.add(model);
         const asset=gltf.parser.json.asset || {};
         const declared=String(item.metadata?.up_axis || gltf.scene.userData.up_axis || asset.extras?.up_axis || '').toLowerCase();

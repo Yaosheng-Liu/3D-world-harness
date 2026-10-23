@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SceneNavigation } from './scene-navigation.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { configureWorldMaterials } from './world-materials.js';
 import { SelectionOutline } from './selection-outline.js';
 import { frameAtTime, nearestFrameAtTime, stepTime, markMatchesMoment, viewForReferenceImage } from './dynamic.js';
 import { setupMinimalLayout } from './layout.js';
@@ -2151,6 +2152,7 @@ async function addObject(item) {
     if (state.objectNodes.get(item.id) !== root) return;
     root.remove(placeholder);
     root.scale.set(...(item.size || [1,1,1]));
+    configureWorldMaterials(gltf.scene);
     root.add(gltf.scene);
     root.userData.gltfRoot = gltf.scene;
     const asset = gltf.parser.json.asset || {};
