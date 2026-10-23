@@ -32,6 +32,8 @@ from projects import ProjectContext, ProjectRegistry
 from human_pose import HumanPoseJobs, prepare_pose_edit_feedback
 from world_service import WORLD_TOOL_MAP, WorldService
 from cycles_preview import published_build, render_preview
+from reconstruction_review import accept_candidate, review_status, review_image
+from world_editor import editor_state, edit_transform
 
 
 HERE = Path(__file__).resolve().parent
@@ -584,6 +586,37 @@ def _make_server_unlocked(
             if self.command == "POST" and path == "/api/workspace/cycles-preview":
                 self._require_browser_capability()
                 return self._send_json(200, render_preview(project_root, store, self._read_json()))
+            if self.command == "GET" and path == "/api/workspace/reconstruction":
+                return self._send_json(200, review_status(project_root))
+            if self.command == "GET" and path == "/api/workspace/reconstruction/image":
+                try:
+                    return self._send_file(review_image(project_root, query.get("view_id", [""])[0], query.get("kind", [""])[0]))
+                except (ValueError, FileNotFoundError) as exc:
+                    raise APIError(409, str(exc)) from exc
+            if self.command == "POST" and path == "/api/workspace/reconstruction/accept":
+                self._require_browser_capability()
+                payload = self._read_json()
+                if set(payload) != {"candidate_path", "review_path", "expected_revision", "expected_scene_revision"}:
+                    raise APIError(400, "candidate, review and both revisions are required")
+                try:
+                    return self._send_json(200, accept_candidate(project_root, store, **payload))
+                except (ValueError, FileNotFoundError) as exc:
+                    raise APIError(409, str(exc)) from exc
+            if self.command == "GET" and path == "/api/workspace/world-editor":
+                try:
+                    return self._send_json(200, editor_state(project_root, store))
+                except ValueError as exc:
+                    raise APIError(409, str(exc)) from exc
+            if self.command == "POST" and path == "/api/workspace/world-editor":
+                self._require_browser_capability()
+                workspace = gateway.state()
+                if (workspace["agent"]["status"] not in {"idle", "external_idle"}
+                        or gateway._model_settings_busy(workspace)):
+                    raise APIError(409, "请先等待当前 Agent 任务完成")
+                try:
+                    return self._send_json(200, edit_transform(project_root, store, self._read_json()))
+                except ValueError as exc:
+                    raise APIError(409, str(exc)) from exc
             world_match = re.fullmatch(r"/api/workspace/world/([a-z]+)", path)
             if self.command == "POST" and world_match:
                 self._require_control_key()

@@ -3,6 +3,7 @@ import { SceneNavigation } from './scene-navigation.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { configureWorldMaterials } from './world-materials.js';
 import { createCyclesPreview } from './cycles-preview.js';
+import { createReconstructionWorkflow } from './reconstruction-workflow.js';
 import { SelectionOutline } from './selection-outline.js';
 import { frameAtTime, nearestFrameAtTime, stepTime, markMatchesMoment, viewForReferenceImage } from './dynamic.js';
 import { setupMinimalLayout } from './layout.js';
@@ -268,6 +269,22 @@ const cyclesPreview = createCyclesPreview({api, viewport:ui.viewport, capture:()
     near:camera.near, far:camera.far};
 }});
 const selectionOutline = new SelectionOutline(renderer);
+const reconstructionWorkflow = createReconstructionWorkflow({api, resourceURL, loadScene,
+  focusObject:objectId => {
+    let target;
+    objectLayer.traverse(node => { if (node.userData.stable_id === objectId) target = node; });
+    if (target) { frameBox(new THREE.Box3().setFromObject(target), {smooth:true}); selectionOutline.setSelection(target); }
+    else announce('当前显示版本中找不到此物体',true);
+  },
+  alignView:(view,clip) => {
+    if (!view.camera_to_world || !clip?.frames?.length) return;
+    const m = view.camera_to_world;
+    const pose = [m[0],m[2],m[1].map(value => -value),m[3]];
+    const frame = clip.frames.find(frame => frame.camera?.camera_to_world?.every((row,i) => row.every((value,j) => Math.abs(value-pose[i][j]) < 1e-5)));
+    if (!frame) { announce('参考片段没有对应机位',true); return; }
+    seekTimeline(frame.time_sec).then(() => { alignActiveReference(); ui.compareOpacity.value = '0'; ui.compareOpacity.dispatchEvent(new Event('input',{bubbles:true})); });
+  }
+});
 let pointerDown = null;
 let sceneClicks = [];
 let selectionClearTimer = null;
@@ -1284,6 +1301,7 @@ function renderEmptyWorkspace() {
     state.navigatingProject || !!state.unloadingProjectId;
 }
 function renderWorkspace(workspace) {
+  reconstructionWorkflow.refresh(workspace);
   state.poseCorrectionsSupported = workspace.pose_corrections_supported === true;
   state.imageReferencesSupported = workspace.image_references_supported === true;
   state.sceneReferencesSupported = workspace.scene_references_supported === true;
