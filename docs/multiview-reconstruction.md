@@ -96,4 +96,4 @@ spark卧室第二版确实执行了Blender编辑：分离`main_bed`的17320个�
 
 物体编辑针对当前已发布世界：选择物体、定位、修改父对象坐标下的位置或XYZ旋转，构建成功后再提交与发布；新GLB和Cycles使用同一工程。Agent运行、排队或重建审核期间禁止直接编辑。编辑会保留世界历史，并把新版本标为待复核，不继承旧版本的质量通过结论。此入口修改变换；几何、拓扑、纹理和父子结构由建模Agent或Blender编辑。
 
-验证：审核/编辑门槛9项、world48项、Cycles7项、插件11项通过。`scripts/test_reconstruction_workflow.py`在独立合成项目运行真实Blender与Chromium，验证候选图、逐对象变换、保存后邻居不变、Cycles同步及手机布局；该合成检查不代表真实卧室候选通过。运行此检查需要Playwright及浏览器、NumPy、Pillow、Blender，且不会调用模型。
+验证：审核/编辑门槛10项、world48项、Cycles7项、插件11项通过。`scripts/test_reconstruction_workflow.py`在独立合成项目运行真实Blender与Chromium，验证候选图、问题区域、通过后发布、逐对象变换、保存后邻居不变、Cycles同步及手机布局；该合成检查不代表真实卧室候选通过。运行此检查需要Playwright及浏览器、NumPy、Pillow、Blender，且不会调用模型。

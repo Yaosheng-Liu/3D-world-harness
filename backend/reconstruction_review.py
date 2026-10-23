@@ -190,7 +190,17 @@ def accept_candidate(project, store, *, candidate_path, review_path, expected_re
 
 def review_status(project):
     path = Path(project) / "reconstruction" / "status.json"
-    return read_json(path) if path.is_file() else {"stage": "not_started"}
+    status = read_json(path) if path.is_file() else {"stage": "not_started"}
+    active = {"modeling", "checking", "reviewing", "reviewed", "repairing", "publishing"}
+    if status["stage"] in active and status.get("pid"):
+        process = Path(f"/proc/{status['pid']}/cmdline")
+        try:
+            command = process.read_bytes().decode().split("\0")
+        except FileNotFoundError:
+            command = []
+        if str(ROOT / "scripts/review_reconstruction.py") not in command or str(Path(project).resolve()) not in command:
+            status.update(stage="interrupted", reason="流程控制进程已停止；最近候选和审核证据仍保留，请检查运行记录。")
+    return status
 
 
 def review_image(project, view_id, kind):

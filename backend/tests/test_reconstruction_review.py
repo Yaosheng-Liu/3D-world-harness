@@ -1,5 +1,4 @@
 """Quality gates must not publish unreviewed, stale, or incomplete candidates."""
-import copy
 import json
 from pathlib import Path
 import sys
@@ -12,7 +11,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import SceneStore
-from reconstruction_review import accept_candidate, validate_review, verify_files, review_image, write_json
+from reconstruction_review import accept_candidate, validate_review, verify_files, review_image, review_status, write_json
 from server import make_server
 from world_build import file_hash
 from world_editor import edit_transform
@@ -75,6 +74,12 @@ class ReviewGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed"): verify_files(project, files)
             source.unlink(); source.symlink_to(__file__)
             with self.assertRaisesRegex(ValueError, "in this project"): verify_files(project, files)
+
+    def test_dead_controller_does_not_keep_showing_modeling(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp)
+            write_json(project / "reconstruction/status.json", {"stage":"modeling", "pid":2147483647})
+            self.assertEqual(review_status(project)["stage"],"interrupted")
 
     def test_failed_review_never_commits_world(self):
         with tempfile.TemporaryDirectory() as temp:

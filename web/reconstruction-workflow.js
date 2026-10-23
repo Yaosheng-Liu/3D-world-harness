@@ -1,7 +1,7 @@
 const stages = {
   not_started:'尚未启动重建审核', modeling:'建模中', checking:'检查候选', reviewing:'独立审核中',
   reviewed:'审核结束', repairing:'准备返工', publishing:'发布中', accepted:'已通过并发布',
-  needs_revision:'待改进', failed:'流程中断', edited:'已编辑，待复核'
+  needs_revision:'待改进', failed:'流程中断', interrupted:'流程已停止', edited:'已编辑，待复核'
 };
 const busyStages = new Set(['modeling','checking','reviewing','reviewed','repairing','publishing']);
 
@@ -19,7 +19,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     <p id="flow-summary" role="status"></p><div id="flow-facts" class="flow-facts"></div>
     <div class="flow-columns"><section><h3>候选与审核</h3><p id="flow-candidate"></p>
     <label for="flow-view">审核视角</label><select id="flow-view"></select>
-    <div id="flow-comparison" class="flow-comparison" hidden><figure><figcaption>原始参考</figcaption><img id="flow-reference" alt="候选视角的原始参考图"/></figure><figure><figcaption>待审候选 · 独立渲染</figcaption><img id="flow-render" alt="候选的独立渲染，不含参考叠图"/></figure></div>
+    <div id="flow-comparison" class="flow-comparison" hidden><figure><figcaption>原始参考</figcaption><div class="flow-picture"><img id="flow-reference" alt="候选视角的原始参考图"/><div class="flow-region" hidden></div></div></figure><figure><figcaption>待审候选 · 独立渲染</figcaption><div class="flow-picture"><img id="flow-render" alt="候选的独立渲染，不含参考叠图"/><div class="flow-region" hidden></div></div></figure></div>
     <button id="flow-align" type="button" disabled>在工具台对齐此机位</button><div id="flow-issues"></div></section>
     <section><h3>当前版本的物体</h3><p id="flow-editor-status"></p><label for="flow-object">选择物体</label><select id="flow-object"></select>
     <button id="flow-focus" type="button">定位物体</button><p id="flow-object-evidence"></p>
@@ -67,10 +67,14 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     }
   }
 
-  function showView() {
+  function showView(region=null) {
     const view = selectedView();
     el('comparison').hidden = !view;
     el('align').disabled = !view;
+    for (const box of dialog.querySelectorAll('.flow-region')) {
+      box.hidden = !region;
+      if (region) Object.assign(box.style, {left:region[0]*100+'%',top:region[1]*100+'%',width:(region[2]-region[0])*100+'%',height:(region[3]-region[1])*100+'%'});
+    }
     if (view) for (const kind of ['reference','render']) {
       el(kind).src = resourceURL('/api/workspace/reconstruction/image?' + new URLSearchParams({view_id:view.id, kind, candidate:status.candidate_id}));
     }
@@ -80,7 +84,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     const active = busyStages.has(status.stage);
     bar.hidden = status.stage === 'not_started' && !workspace.reference_clip;
     bar.dataset.active = String(active);
-    el('stage').textContent = stages[status.stage] || status.stage;
+    el('stage').textContent = status.stage === 'modeling' && workspace.approvals?.length ? '建模等待确认' : stages[status.stage] || status.stage;
     el('version').textContent = `显示 v${workspace.scene_revision ?? '—'}${status.round ? ` · 第 ${status.round}/${status.max_rounds} 轮` : ''}`;
     el('summary').textContent = status.error || status.reason || (status.stage === 'modeling'
       ? '建模 Agent 正在制作候选。当前工具台保留上一版；候选完成后进入独立检查与审核。'
@@ -110,7 +114,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
       const evidence = document.createElement('p'); evidence.textContent = issue.evidence;
       const criterion = document.createElement('p'); criterion.textContent = '复验标准：' + issue.acceptance_criterion;
       const button = document.createElement('button'); button.type = 'button'; button.textContent = '查看 ' + issue.view_id;
-      button.onclick = () => { el('view').value = issue.view_id; showView(); el('comparison').scrollIntoView({block:'nearest'}); };
+      button.onclick = () => { el('view').value = issue.view_id; showView(issue.region); el('comparison').scrollIntoView({block:'nearest'}); };
       card.append(heading,evidence,criterion,button); return card;
     }));
     el('record').textContent = JSON.stringify({run_id:status.run_id, candidate_id:status.candidate_id,
@@ -132,7 +136,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
   el('close').onclick = () => dialog.close();
   el('object').onchange = fillObject;
   el('reset').onclick = fillObject;
-  el('view').onchange = showView;
+  el('view').onchange = () => showView();
   el('focus').onclick = () => { if (selectedObject()) { dialog.close(); focusObject(selectedObject().id); } };
   el('align').onclick = () => { const view = selectedView(); if (view) { dialog.close(); alignView(view,workspace.reference_clip); } };
   el('edit-form').onsubmit = async event => {

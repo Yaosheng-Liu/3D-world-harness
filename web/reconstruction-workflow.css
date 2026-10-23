@@ -21,7 +21,10 @@
 .flow-comparison { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
 .flow-comparison[hidden] { display:none; }
 .flow-comparison figure { margin:0; font-size:12px; }
-.flow-comparison img { display:block; width:100%; margin-top:5px; background:#eee; }
+.flow-comparison img { display:block; width:100%; background:#eee; }
+.flow-picture { position:relative; margin-top:5px; }
+.flow-region { position:absolute; border:2px solid #d54837; background:#d5483710; pointer-events:none; }
+.flow-region[hidden] { display:none; }
 .flow-vector { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
 .flow-vector label { display:flex; flex-direction:column; gap:4px; font-size:12px; }
 .flow-vector input { min-width:0; width:100%; }

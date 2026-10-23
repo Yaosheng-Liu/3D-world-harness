@@ -88,6 +88,8 @@ def main():
             page.locator('#flow-open').click()
             page.wait_for_function("document.querySelector('#flow-object').options.length > 0")
             page.wait_for_function("document.querySelector('#flow-render').naturalWidth > 0 && document.querySelector('#flow-reference').naturalWidth > 0")
+            page.locator('#flow-issues button').first.click()
+            assert page.locator('.flow-region:not([hidden])').count()==2
             page.screenshot(path=str(args.output / "workflow.png"))
             page.locator('#flow-object').select_option('block')
             page.locator('#flow-position input').nth(0).fill('0.2')
