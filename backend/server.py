@@ -31,6 +31,7 @@ from gateway import WorkspaceGateway
 from projects import ProjectContext, ProjectRegistry
 from human_pose import HumanPoseJobs, prepare_pose_edit_feedback
 from world_service import WORLD_TOOL_MAP, WorldService
+from cycles_preview import published_build, render_preview
 
 
 HERE = Path(__file__).resolve().parent
@@ -574,6 +575,15 @@ def _make_server_unlocked(
                     gateway._project_file(payload.get("local_path"))
                 scene = store.set_scene_preview(payload.get("local_path"), expected_revision=payload["expected_revision"])
                 return self._send_json(200, scene)
+            if self.command == "GET" and path == "/api/workspace/cycles-preview":
+                try:
+                    scene, build = published_build(project_root, store)
+                    return self._send_json(200, {"available": True, "scene_revision": scene["revision"], "build_id": build["id"]})
+                except APIError as exc:
+                    return self._send_json(200, {"available": False, "reason": exc.message})
+            if self.command == "POST" and path == "/api/workspace/cycles-preview":
+                self._require_browser_capability()
+                return self._send_json(200, render_preview(project_root, store, self._read_json()))
             world_match = re.fullmatch(r"/api/workspace/world/([a-z]+)", path)
             if self.command == "POST" and world_match:
                 self._require_control_key()

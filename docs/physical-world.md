@@ -79,6 +79,16 @@ CLI 模式和 MCP Events 模式均提供同一组工具：
 
 ## 验收与局限
 
+### 工具台 Cycles 精细预览
+
+发布 world 构建后，工具台顶部出现「Cycles 精细预览」和「停下自动预览」。拖动相机、播放动画时显示 Three.js；停下约 0.9 秒后在运行主机用 Blender Cycles 渲染当前视角，也可关闭自动模式后手动点击。切换视角、尺寸、时间或显示版本时立即隐藏旧图，迟到结果不会覆盖新视角。当前 Cycles 图可用原「截图」按钮保存和标注。
+
+预览按显示 GLB 的内容哈希匹配其已发布 Blender 工程，不使用尚未发布的新世界。相机从 glTF Y-up 转到 Blender Z-up，保留透视偏移、画幅、裁剪距离及动画时间；返回投影核验误差。Blender 工程和模型资产不会被预览改写。
+
+首版使用 CPU、8 线程、16 采样，网页最长边最多 960 像素；一次服务只运行一个预览，90 秒超时。预览期间仍能旋转和编辑，渲染失败会显示原因并保留实时 3D。仅支持现有 world 发布的完整模型；普通导入 GLB 或在显示层另行改变整体变换的模型不会显示入口。Cycles 使用构建中保存的材质和照明，不加入网页装饰网格、选择描边或雾效，也不会自动补齐几何、分离照片中的光照或完成物理标定。
+
+接口：`GET /api/workspace/cycles-preview` 检查可用性；`POST` 接收显示版本、Blender/OpenGL 相机矩阵、内参、裁剪距离和时间，需要浏览器 capability。验证可运行 `python3 -m unittest discover -s backend/tests -p test_cycles_preview.py`；安装 Playwright 的环境可运行 `python3 scripts/test_cycles_preview_browser.py --url http://127.0.0.1:18779/ --output /tmp/cycles-review`，该检查只操作测试浏览器中的视角与预览控件。
+
 构建检查 Blender 重开、对象身份和层级、GLB 结构与资产哈希。仿真使用固定步长，输出带版本和时间戳的轨迹，以及非有限状态、接触穿透、关节限位等检查。动画发布要求对应物理检查通过。源文件、世界版本或构建产物改变后，旧构建不能继续通过世界发布入口。
 
 带精确相机及参考图的构建可测量 `visual_accuracy`（见[多视角重建](multiview-reconstruction.md)）；没有参考或渲染时为 `not_measured`。`physical_calibration` 仍为 `not_measured`。物理冒烟检查通过仅说明当前动作未触发这些失败，不能代替实物实验或证明所有动作稳定。固定视角渲染供人工检查；下一步应加入真实尺度、多视角留出集和滑动/开合实测记录。

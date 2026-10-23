@@ -258,11 +258,11 @@ def configure_camera(scene, camera, view):
     camera.data.shift_y = (k["cy"] - k["height"] / 2) * aspect / k["width"]
 
 
-def check_projection(scene, camera, view):
+def check_projection(scene, camera, view, *, probe_distance=1):
     k, error = view["intrinsics"], 0
     bpy.context.view_layer.update()
     for u, v in ((0, 0), (k["width"], 0), (0, k["height"]), (k["width"], k["height"]), (k["cx"], k["cy"])):
-        point = Matrix(view["camera_to_world"]) @ Vector(((u-k["cx"])/k["fx"], -(v-k["cy"])/k["fy"], -1))
+        point = Matrix(view["camera_to_world"]) @ (Vector(((u-k["cx"])/k["fx"], -(v-k["cy"])/k["fy"], -1)) * probe_distance)
         projected = world_to_camera_view(scene, camera, point)
         error = max(error, abs(projected.x*k["width"]-u), abs((1-projected.y)*k["height"]-v))
     if error > 0.002:

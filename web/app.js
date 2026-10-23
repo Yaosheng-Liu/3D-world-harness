@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { SceneNavigation } from './scene-navigation.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { configureWorldMaterials } from './world-materials.js';
+import { createCyclesPreview } from './cycles-preview.js';
 import { SelectionOutline } from './selection-outline.js';
 import { frameAtTime, nearestFrameAtTime, stepTime, markMatchesMoment, viewForReferenceImage } from './dynamic.js';
 import { setupMinimalLayout } from './layout.js';
@@ -250,6 +251,22 @@ threeScene.add(objectLayer, feedbackLayer);
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const gltfLoader = new GLTFLoader();
+const cyclesPreview = createCyclesPreview({api, viewport:ui.viewport, capture:() => {
+  if (!state.workspaceReady || state.sceneLoading || state.sceneRevision === null ||
+      state.sceneView !== 'live' || state.playing || document.hidden) return null;
+  const width = ui.viewport.clientWidth, height = ui.viewport.clientHeight;
+  if (width < 16 || height < 16) return null;
+  const scale = Math.min(1, 960 / Math.max(width, height));
+  const w = Math.max(16, Math.round(width*scale)), h = Math.max(16, Math.round(height*scale));
+  camera.updateMatrixWorld();
+  // glTF Y-up -> the world build's Blender Z-up coordinates.
+  const m = new THREE.Matrix4().makeRotationX(Math.PI/2).multiply(camera.matrixWorld).elements;
+  const p = camera.projectionMatrix.elements;
+  return {scene_revision:state.sceneRevision, time_sec:Math.round(state.time*1e4)/1e4,
+    camera_to_world:Array.from({length:4}, (_, row) => Array.from({length:4}, (_, col) => Math.round(m[col*4+row]*1e7)/1e7)),
+    intrinsics:{width:w, height:h, fx:p[0]*w/2, fy:p[5]*h/2, cx:(1-p[8])*w/2, cy:(1+p[9])*h/2},
+    near:camera.near, far:camera.far};
+}});
 const selectionOutline = new SelectionOutline(renderer);
 let pointerDown = null;
 let sceneClicks = [];
@@ -2588,9 +2605,14 @@ function settleOrbit() {
 function captureLiveScene({includeSize=false}={}) {
   controls.update();
   renderLiveScene();
-  const source = renderer.domElement;
-  const canvas = scaledCanvas(source.width, source.height, 1440);
-  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+  const source = cyclesPreview.currentImage() || renderer.domElement;
+  const canvas = scaledCanvas(source.naturalWidth || source.width, source.naturalHeight || source.height, 1440);
+  const context = canvas.getContext('2d');
+  if (source !== renderer.domElement) {
+    context.fillStyle = getComputedStyle(source).backgroundColor;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
   const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
   return includeSize ? {data_url:dataUrl, width:canvas.width, height:canvas.height} : dataUrl;
 }
@@ -6318,6 +6340,7 @@ function animate(timestamp) {
   }
   advanceTimeline(timestamp);
   controls.tick(timestamp);
+  cyclesPreview.tick(timestamp, state.sceneRevision);
   if (state.sceneView === 'live') renderLiveScene();
 }
 async function poll() {
