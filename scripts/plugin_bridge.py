@@ -53,7 +53,7 @@ class Bridge:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def read(self, request: urllib.request.Request) -> dict | None:
-        with self.opener.open(request, timeout=30) as response:
+        with self.opener.open(request, timeout=360) as response:
             raw = response.read(MAX_RESPONSE + 1)
             if len(raw) > MAX_RESPONSE:
                 raise ValueError("MCP response exceeded bridge size limit")

@@ -30,6 +30,7 @@ from core import APIError, SceneStore
 from gateway import WorkspaceGateway
 from projects import ProjectContext, ProjectRegistry
 from human_pose import HumanPoseJobs, prepare_pose_edit_feedback
+from world_service import WORLD_TOOL_MAP, WorldService
 
 
 HERE = Path(__file__).resolve().parent
@@ -573,6 +574,14 @@ def _make_server_unlocked(
                     gateway._project_file(payload.get("local_path"))
                 scene = store.set_scene_preview(payload.get("local_path"), expected_revision=payload["expected_revision"])
                 return self._send_json(200, scene)
+            world_match = re.fullmatch(r"/api/workspace/world/([a-z]+)", path)
+            if self.command == "POST" and world_match:
+                self._require_control_key()
+                tool_name = "workspace_" + world_match.group(1) + "_world"
+                if tool_name not in WORLD_TOOL_MAP:
+                    raise APIError(404, "unknown world operation")
+                result = WorldService(gateway.project_dir, store).call(tool_name, self._read_json())
+                return self._send_json(200, result)
             if self.command == "GET" and path == "/api/scene":
                 return self._send_json(200, store.scene())
             if self.command == "PUT" and path == "/api/scene":

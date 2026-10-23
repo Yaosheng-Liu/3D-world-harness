@@ -496,7 +496,7 @@ class CodexAppServerAdapter:
                     "command": sys.executable,
                     "args": [str(mcp_script)],
                     "env": mcp_env,
-                    "tool_timeout_sec": 120,
+                    "tool_timeout_sec": 360,
                     "required": True,
                 }
             }

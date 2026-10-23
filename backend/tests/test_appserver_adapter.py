@@ -251,7 +251,7 @@ class AppServerAdapterTests(unittest.TestCase):
                 until(lambda: any(event["method"] == "adapter/empty_thread_recreated" for event in events))
                 self.assertEqual(json.loads(state.read_text())["thread_id"], "thread-test")
                 frame = next(json.loads(line) for line in log.read_text().splitlines() if '"method": "thread/start"' in line)
-                self.assertEqual(frame["params"]["config"]["mcp_servers"]["scene_feedback"]["tool_timeout_sec"], 120)
+                self.assertEqual(frame["params"]["config"]["mcp_servers"]["scene_feedback"]["tool_timeout_sec"], 360)
             finally:
                 adapter.close()
 

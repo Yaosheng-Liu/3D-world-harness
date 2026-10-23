@@ -62,6 +62,9 @@ class PluginPackageTests(unittest.TestCase):
         with zipfile.ZipFile(first) as archive:
             self.assertTrue(all(name.startswith(NAME + "/") for name in archive.namelist()))
             self.assertNotIn(NAME + "/backend/data/control_token", archive.namelist())
+            for name in ("docs/physical-world.md", "scripts/world.py", "scripts/world_blender.py",
+                         "examples/physical_world/scene.json"):
+                self.assertIn(NAME + "/" + name, archive.namelist())
 
     def test_symlink_and_secret_files_are_rejected(self):
         (self.root / "web" / "linked.js").symlink_to(self.root / "backend" / "server.py")

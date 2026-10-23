@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "scene_id": "physical_world_demo",
+  "name": "Editable physical tabletop (synthetic)",
+  "units": "m",
+  "up_axis": "Z",
+  "provenance": {"kind": "synthetic", "description": "Procedural tabletop for editing, rendering and rigid-body validation. This is not a reconstruction of a captured real scene.", "sources": []},
+  "objects": [
+    {
+      "id": "floor",
+      "name": "Floor",
+      "parent_id": null,
+      "position": [0, 0, -0.05],
+      "rotation": [0, 0, 0],
+      "visual": [
+        {"type": "box", "size": [4, 4, 0.1]}
+      ],
+      "collision": [
+        {"type": "box", "size": [4, 4, 0.1]}
+      ],
+      "material": {"base_color": [0.16, 0.18, 0.2, 1], "roughness": 0.6, "metallic": 0},
+      "physics": {"body_type": "static", "mass": 0, "friction": 0.6},
+      "evidence": {"geometry": "synthetic", "physics": "synthetic", "notes": "Procedural demonstration. Dimensions, mass and friction are synthetic, not measured."}
+    },
+    {
+      "id": "table",
+      "name": "Table",
+      "parent_id": null,
+      "position": [0, 0, 0.75],
+      "rotation": [0, 0, 0],
+      "visual": [
+        {"type": "box", "size": [1.8, 1.1, 0.06]},
+        {"type": "box", "size": [0.06, 0.06, 0.72], "position": [-0.8, -0.45, -0.39]},
+        {"type": "box", "size": [0.06, 0.06, 0.72], "position": [-0.8, 0.45, -0.39]},
+        {"type": "box", "size": [0.06, 0.06, 0.72], "position": [0.8, -0.45, -0.39]},
+        {"type": "box", "size": [0.06, 0.06, 0.72], "position": [0.8, 0.45, -0.39]}
+      ],
+      "collision": [
+        {"type": "box", "size": [1.8, 1.1, 0.06]},
+        {"type": "box", "size": [0.06, 0.06, 0.72], "position": [-0.8, -0.45, -0.39]},
+        {"type": "box", "size": [0.06, 0.06, 0.72], "position": [-0.8, 0.45, -0.39]},
+        {"type": "box", "size": [0.06, 0.06, 0.72], "position": [0.8, -0.45, -0.39]},
+        {"type": "box", "size": [0.06, 0.06, 0.72], "position": [0.8, 0.45, -0.39]}
+      ],
+      "material": {"base_color": [0.45, 0.28, 0.14, 1], "roughness": 0.6, "metallic": 0},
+      "physics": {"body_type": "static", "mass": 0, "friction": 0.6},
+      "evidence": {"geometry": "synthetic", "physics": "synthetic", "notes": "Procedural demonstration. Dimensions, mass and friction are synthetic, not measured."}
+    },
+    {
+      "id": "block",
+      "name": "Red block",
+      "parent_id": null,
+      "position": [-0.45, 0.15, 0.835],
+      "rotation": [0, 0, 0],
+      "visual": [
+        {"type": "box", "size": [0.1, 0.1, 0.1]}
+      ],
+      "collision": [
+        {"type": "box", "size": [0.1, 0.1, 0.1]}
+      ],
+      "material": {"base_color": [0.7, 0.12, 0.08, 1], "roughness": 0.6, "metallic": 0},
+      "physics": {"body_type": "dynamic", "mass": 0.25, "friction": 0.6},
+      "evidence": {"geometry": "synthetic", "physics": "synthetic", "notes": "Procedural demonstration. Dimensions, mass and friction are synthetic, not measured."}
+    },
+    {
+      "id": "ball",
+      "name": "Blue ball",
+      "parent_id": null,
+      "position": [-0.55, -0.25, 0.835],
+      "rotation": [0, 0, 0],
+      "visual": [
+        {"type": "sphere", "radius": 0.05}
+      ],
+      "collision": [
+        {"type": "sphere", "radius": 0.05}
+      ],
+      "material": {"base_color": [0.08, 0.24, 0.7, 1], "roughness": 0.6, "metallic": 0},
+      "physics": {"body_type": "dynamic", "mass": 0.1, "friction": 0.6},
+      "evidence": {"geometry": "synthetic", "physics": "synthetic", "notes": "Procedural demonstration. Dimensions, mass and friction are synthetic, not measured."}
+    },
+    {
+      "id": "cup",
+      "name": "Hollow twelve-sided cup",
+      "parent_id": null,
+      "position": [-0.05, -0.25, 0.781],
+      "rotation": [0, 0, 0],
+      "visual": [
+        {"type": "cylinder", "radius": 0.065, "depth": 0.012, "position": [0, 0, 0.006]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.06, 0.0, 0.072], "rotation": [0, 0, 1.570796]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.051962, 0.03, 0.072], "rotation": [0, 0, 2.094395]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.03, 0.051962, 0.072], "rotation": [0, 0, 2.617994]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.0, 0.06, 0.072], "rotation": [0, 0, 3.141593]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.03, 0.051962, 0.072], "rotation": [0, 0, 3.665191]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.051962, 0.03, 0.072], "rotation": [0, 0, 4.18879]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.06, 0.0, 0.072], "rotation": [0, 0, 4.712389]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.051962, -0.03, 0.072], "rotation": [0, 0, 5.235988]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.03, -0.051962, 0.072], "rotation": [0, 0, 5.759587]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.0, -0.06, 0.072], "rotation": [0, 0, 6.283185]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.03, -0.051962, 0.072], "rotation": [0, 0, 6.806784]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.051962, -0.03, 0.072], "rotation": [0, 0, 7.330383]}
+      ],
+      "collision": [
+        {"type": "cylinder", "radius": 0.065, "depth": 0.012, "position": [0, 0, 0.006]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.06, 0.0, 0.072], "rotation": [0, 0, 1.570796]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.051962, 0.03, 0.072], "rotation": [0, 0, 2.094395]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.03, 0.051962, 0.072], "rotation": [0, 0, 2.617994]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.0, 0.06, 0.072], "rotation": [0, 0, 3.141593]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.03, 0.051962, 0.072], "rotation": [0, 0, 3.665191]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.051962, 0.03, 0.072], "rotation": [0, 0, 4.18879]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.06, 0.0, 0.072], "rotation": [0, 0, 4.712389]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.051962, -0.03, 0.072], "rotation": [0, 0, 5.235988]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.03, -0.051962, 0.072], "rotation": [0, 0, 5.759587]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [-0.0, -0.06, 0.072], "rotation": [0, 0, 6.283185]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.03, -0.051962, 0.072], "rotation": [0, 0, 6.806784]},
+        {"type": "box", "size": [0.032154, 0.012, 0.12], "position": [0.051962, -0.03, 0.072], "rotation": [0, 0, 7.330383]}
+      ],
+      "material": {"base_color": [0.82, 0.84, 0.78, 1], "roughness": 0.6, "metallic": 0},
+      "physics": {"body_type": "dynamic", "mass": 0.25, "friction": 0.6},
+      "evidence": {"geometry": "synthetic", "physics": "synthetic", "notes": "Procedural demonstration. Dimensions, mass and friction are synthetic, not measured."}
+    },
+    {
+      "id": "cabinet",
+      "name": "Small cabinet",
+      "parent_id": null,
+      "position": [0.52, 0.2, 0.78],
+      "rotation": [0, 0, 0],
+      "visual": [
+        {"type": "box", "size": [0.42, 0.32, 0.02], "position": [0, 0, 0.01]},
+        {"type": "box", "size": [0.42, 0.32, 0.02], "position": [0, 0, 0.41]},
+        {"type": "box", "size": [0.02, 0.32, 0.4], "position": [-0.2, 0, 0.21]},
+        {"type": "box", "size": [0.02, 0.32, 0.4], "position": [0.2, 0, 0.21]},
+        {"type": "box", "size": [0.38, 0.02, 0.4], "position": [0, 0.15, 0.21]}
+      ],
+      "collision": [
+        {"type": "box", "size": [0.42, 0.32, 0.02], "position": [0, 0, 0.01]},
+        {"type": "box", "size": [0.42, 0.32, 0.02], "position": [0, 0, 0.41]},
+        {"type": "box", "size": [0.02, 0.32, 0.4], "position": [-0.2, 0, 0.21]},
+        {"type": "box", "size": [0.02, 0.32, 0.4], "position": [0.2, 0, 0.21]},
+        {"type": "box", "size": [0.38, 0.02, 0.4], "position": [0, 0.15, 0.21]}
+      ],
+      "material": {"base_color": [0.48, 0.34, 0.22, 1], "roughness": 0.6, "metallic": 0},
+      "physics": {"body_type": "static", "mass": 0, "friction": 0.6},
+      "evidence": {"geometry": "synthetic", "physics": "synthetic", "notes": "Procedural demonstration. Dimensions, mass and friction are synthetic, not measured."}
+    },
+    {
+      "id": "door",
+      "name": "Hinged cabinet door",
+      "parent_id": "cabinet",
+      "position": [-0.21, -0.175, 0.21],
+      "rotation": [0, 0, 0],
+      "visual": [
+        {"type": "box", "size": [0.42, 0.025, 0.42], "position": [0.21, 0, 0]}
+      ],
+      "collision": [
+        {"type": "box", "size": [0.42, 0.025, 0.42], "position": [0.21, 0, 0]}
+      ],
+      "material": {"base_color": [0.25, 0.43, 0.42, 1], "roughness": 0.6, "metallic": 0},
+      "physics": {"body_type": "dynamic", "mass": 0.6, "friction": 0.6},
+      "evidence": {"geometry": "synthetic", "physics": "synthetic", "notes": "Procedural demonstration. Dimensions, mass and friction are synthetic, not measured."},
+      "joint": {"type": "hinge", "axis": [0, 0, -1], "position": [0, 0, 0], "range": [0, 1.57], "damping": 0.3}
+    }
+  ],
+  "views": [{"id": "overview", "position": [2.3, -3, 2.25], "target": [0, 0, 0.7], "fov_y_deg": 42}, {"id": "side", "position": [-2.4, -1.5, 1.8], "target": [0, 0, 0.75], "fov_y_deg": 45}]
+}

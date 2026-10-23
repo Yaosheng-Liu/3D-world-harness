@@ -170,6 +170,8 @@ mcp = MCPServer(
         "selected object, and note to return as the tool result. With a bound desktop task, the "
         "workbench sends the submitted visual feedback as a new message to that same task. "
         "Continue editing there and publish the updated GLB with workspace_publish_scene."
+        " For projects with world/scene.json, use workspace_inspect_world, edit/build/evaluate_world "
+        "and workspace_publish_world so object identity, physics and source revisions stay consistent."
     ),
 )
 
@@ -329,6 +331,76 @@ def workspace_publish_scene(local_path: str, expected_revision: int) -> dict[str
     """Publish a self-contained GLB after editing its source; refresh the same workbench."""
     ensure_http_server()
     return _http("POST", "/api/workspace/publish", {"local_path": local_path, "expected_revision": expected_revision}, private=True)
+
+
+def _world(operation: str, arguments: dict[str, Any], *, timeout: int = 10) -> dict[str, Any]:
+    ensure_http_server()
+    return _http("POST", "/api/workspace/world/" + operation,
+                 {key: value for key, value in arguments.items() if value is not None}, private=True, timeout=timeout)
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False, idempotent_hint=True))
+def workspace_inspect_world(object_id: str | None = None) -> dict[str, Any]:
+    """Read the editable world or one persistent object. World and displayed scene revisions are independent."""
+    return _world("inspect", {"object_id": object_id})
+
+
+@mcp.tool()
+def workspace_initialize_world(local_path: str) -> dict[str, Any]:
+    """Initialize world/scene.json from a project-local world manifest; refuses to replace an existing world."""
+    return _world("initialize", {"local_path": local_path})
+
+
+@mcp.tool()
+def workspace_edit_world(expected_revision: int, changes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Apply atomic add(object), update(object_id, fields), delete(object_id) operations with an op field.
+
+    Update fields replace whole object fields. Preserve IDs and update visual/collision together when
+    changing geometry. This edits the source; build and publish separately to refresh the workbench.
+    """
+    return _world("edit", {"expected_revision": expected_revision, "changes": changes})
+
+
+@mcp.tool()
+def workspace_restore_world(expected_revision: int, revision: int) -> dict[str, Any]:
+    """Restore an earlier world as a new revision, preserving history. Rebuild before publishing."""
+    return _world("restore", {"expected_revision": expected_revision, "revision": revision})
+
+
+@mcp.tool()
+def workspace_build_world(expected_revision: int, render: bool = False, simulation_id: str | None = None) -> dict[str, Any]:
+    """Build editable Blender + GLB with stable IDs; optionally render review views or bake a physics run.
+
+    Blender runs on the workbench host. simulation_id must belong to the current world revision.
+    Returns build ID, paths and integrity checks. Rendering alone does not prove reconstruction accuracy.
+    """
+    return _world("build", {"expected_revision": expected_revision, "render": render, "simulation_id": simulation_id}, timeout=330)
+
+
+@mcp.tool()
+def workspace_simulate_world(expected_revision: int, action: dict[str, Any] | None = None,
+                             duration_sec: float = 2, sample_hz: float = 30) -> dict[str, Any]:
+    """Simulate MuJoCo physics on the current world, returning a simulation ID, checks and trajectory paths.
+
+    action: impulse/force {type,object_id,vector,duration_sec?}, or joint_force
+    {type,object_id,force,duration_sec}. No action tests gravity and contacts.
+    Parameters are measured/estimated/synthetic as recorded; checks do not establish real-world calibration.
+    """
+    return _world("simulate", {"expected_revision": expected_revision, "action": action,
+                               "duration_sec": duration_sec, "sample_hz": sample_hz}, timeout=120)
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False, idempotent_hint=True))
+def workspace_evaluate_world(expected_revision: int, build_id: str, simulation_id: str | None = None) -> dict[str, Any]:
+    """Check current build/source integrity and optional physics. Unmeasured visual and physical accuracy stay explicit."""
+    return _world("evaluate", {"expected_revision": expected_revision, "build_id": build_id, "simulation_id": simulation_id})
+
+
+@mcp.tool()
+def workspace_publish_world(expected_revision: int, expected_scene_revision: int, build_id: str) -> dict[str, Any]:
+    """Publish a validated current-world GLB using separate world and displayed scene revision guards."""
+    return _world("publish", {"expected_revision": expected_revision, "expected_scene_revision": expected_scene_revision,
+                              "build_id": build_id})
 
 
 @mcp.tool()

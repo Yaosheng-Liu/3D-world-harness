@@ -1,0 +1,2 @@
+# Optional physical-world execution; web viewing does not require MuJoCo.
+mujoco>=3.3,<4
