@@ -75,7 +75,7 @@ spark卧室第二版确实执行了Blender编辑：分离`main_bed`的17320个�
 
 ## 建模与独立审核闭环
 
-`scripts/review_reconstruction.py` 复用工具台的建模会话，将提交候选、确定性检查、独立只读审核、问题回传和通过后发布串起来。建模固定为 `gpt-6-astra / high`；审核默认 `gpt-6.1-sol / ultra`，模型不可用时明确失败，不自动降级。本轮spark账号实际拒绝Sol 6.1，经用户允许临时通过 `--review-model gpt-6-sol` 使用Sol 6 Ultra；状态同时保留原请求与实际模型。本阶段物理不作为验收项，也不运行仿真。
+`scripts/review_reconstruction.py` 复用工具台的建模会话，将提交候选、确定性检查、独立只读审核、问题回传和通过后发布串起来。建模固定为 `gpt-6-astra / high`；审核默认 `gpt-6.1-sol / ultra`，模型不可用时明确失败，不自动降级。spark旧CLI 0.156.1曾拒绝Sol 6.1，经用户允许临时配置过Sol 6 Ultra；独立安装CLI 0.164.0后，Sol 6.1 Ultra实际请求成功，已恢复原指定模型。建模工作台仍使用原运行环境；状态同时保留请求与实际模型。本阶段物理不作为验收项，也不运行仿真。
 
 先通过工具台向Astra提交建模任务，要求新资产使用新目录、输出完整world候选JSON以及`build_world(scene=candidate, render=True)`的receipt；候选版本为当前世界版本加一。建模者保留当前`world/scene.json`与已发布场景。然后在同一计算端运行：
 
@@ -94,6 +94,16 @@ spark卧室第二版确实执行了Blender编辑：分离`main_bed`的17320个�
 
 工具台场景上方的「重建流程 / 物体编辑」展示当前显示版本、候选、轮次、两个角色、检查和问题单。候选原图/独立渲染可直接查看；问题定位到审核视角，可返回主工具台对齐同机位。`reconstruction/status.json`保存进度，各轮证据位于独立目录，未通过候选不会替换当前显示版本。
 
+需要本轮审核结束后停止时，启动控制器时传 `--max-rounds 1`；保留候选和问题单，下次再修复，不自动提交下一轮建模。本次按用户收尾要求使用此设置。
+
+spark的独立审核CLI位于 `/home/yao/3D-harness/runtime/review-codex-0.164.0/`，使用其 `home` 子目录作为 `CODEX_HOME`。Ubuntu 24.04最初阻止bubblewrap创建用户命名空间；经用户明确授权，加载Ubuntu软件包提供的 `/etc/apparmor.d/bwrap-userns-restrict` 配置，未关闭全局AppArmor限制。实测只读沙盒可读工程，写文件和访问本地工具台端口均被拒绝；Sol 6.1 Ultra随后实际读取世界版本并识别附图。安装与探测记录留在该运行目录。环境探测成功不代表场景质量通过。配置依据：[官方Linux沙盒说明](https://learn.chatgpt.com/docs/sandboxing)。
+
 物体编辑针对当前已发布世界：选择物体、定位、修改父对象坐标下的位置或XYZ旋转，构建成功后再提交与发布；新GLB和Cycles使用同一工程。Agent运行、排队或重建审核期间禁止直接编辑。编辑会保留世界历史，并把新版本标为待复核，不继承旧版本的质量通过结论。此入口修改变换；几何、拓扑、纹理和父子结构由建模Agent或Blender编辑。
 
 验证：审核/编辑门槛10项、world48项、Cycles7项、插件11项通过。`scripts/test_reconstruction_workflow.py`在独立合成项目运行真实Blender与Chromium，验证候选图、问题区域、通过后发布、逐对象变换、保存后邻居不变、Cycles同步及手机布局；该合成检查不代表真实卧室候选通过。运行此检查需要Playwright及浏览器、NumPy、Pillow、Blender，且不会调用模型。
+
+### 本次收尾位置
+
+正式18779服务已在Astra自然完成后更新；真实浏览器验证309帧参考、候选图、精确机位对齐、Cycles和手机布局，无页面错误。展厅V3候选64对象保存在spark工程 `multiview-bedroom-20261023-surface-preserved/refinement_v3/`，正式审核目录为 `reconstruction/20261023T195444Z-1ad79aaa/round_01/`。固定六视角PSNR约18.07dB只是诊断；4个抽屉原点未通过独立程序检查，墙地面还残留捕获阴影，外围仍有碎面，不能称完整真实还原。
+
+本机中间成果在 `/home/yao/proxy2real/exports/reconstructed_scenes_intermediate/dl3dv_05c8_v3_20261024/`。`review_comparison.mp4`是8个训练视角的原图/V2/V3对比幻灯视频；`main_bed_turntable.mp4`是主床48帧新机位环绕渲染。两段均8秒，已完整解码验证，均不是整场景连续重建视频。候选未加入已完成场景清单；下次从该候选和独立问题单继续，物理仍暂缓。
