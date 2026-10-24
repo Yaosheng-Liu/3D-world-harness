@@ -41,7 +41,6 @@ export async function renderSceneReferencePreview(record,{resourceURL=(url)=>url
       layer.add(root);
       if(item.type==='model') {
         const gltf=loaded.get(item.url),model=cloneSkeleton(gltf.scene);
-        configureWorldMaterials(model);
         root.scale.fromArray(size);root.add(model);
         const asset=gltf.parser.json.asset || {};
         const declared=String(item.metadata?.up_axis || gltf.scene.userData.up_axis || asset.extras?.up_axis || '').toLowerCase();
@@ -77,6 +76,7 @@ export async function renderSceneReferencePreview(record,{resourceURL=(url)=>url
     const distance=radius/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*1.15;
     camera.position.copy(center).add(remap(1,-1,.75).normalize().multiplyScalar(distance));camera.lookAt(center);camera.updateMatrixWorld(true);
     renderer=new THREE.WebGLRenderer({canvas,antialias:true,preserveDrawingBuffer:true});
+    configureWorldMaterials(layer,renderer.capabilities.maxTextureSize);
     renderer.setPixelRatio(1);renderer.setSize(width,height,false);
     renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.65;
     renderer.render(scene,camera);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SceneNavigation } from './scene-navigation.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { configureWorldMaterials } from './world-materials.js';
+import { configureWorldLoader, configureWorldMaterials } from './world-materials.js';
 import { createCyclesPreview } from './cycles-preview.js';
 import { createReconstructionWorkflow } from './reconstruction-workflow.js';
 import { SelectionOutline } from './selection-outline.js';
@@ -252,6 +252,7 @@ threeScene.add(objectLayer, feedbackLayer);
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const gltfLoader = new GLTFLoader();
+configureWorldLoader(gltfLoader);
 const cyclesPreview = createCyclesPreview({api, viewport:ui.viewport, capture:() => {
   if (!state.workspaceReady || state.sceneLoading || state.sceneRevision === null ||
       state.sceneView !== 'live' || state.playing || document.hidden) return null;
@@ -2185,9 +2186,9 @@ async function addObject(item) {
     if (!item.url) throw new Error('缺少 GLB 地址');
     const gltf = await gltfLoader.loadAsync(resourceURL(item.url));
     if (state.objectNodes.get(item.id) !== root) return;
+    configureWorldMaterials(gltf.scene, renderer.capabilities.maxTextureSize);
     root.remove(placeholder);
     root.scale.set(...(item.size || [1,1,1]));
-    configureWorldMaterials(gltf.scene);
     root.add(gltf.scene);
     root.userData.gltfRoot = gltf.scene;
     const asset = gltf.parser.json.asset || {};
