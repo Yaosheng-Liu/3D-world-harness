@@ -1,6 +1,6 @@
 import * as THREE from './vendor/three/build/three.module.min.js';
 import {GLTFLoader} from './vendor/three/examples/jsm/loaders/GLTFLoader.js';
-import {configureWorldMaterials} from './world-materials.js';
+import {configureWorldPreview} from './world-materials.js';
 import {clone as cloneSkeleton} from './vendor/three/examples/jsm/utils/SkeletonUtils.js';
 
 const ASSET=/^(?:\/p\/[0-9a-f]{32})?\/assets\/[0-9a-f]{32}\.glb$/;
@@ -76,7 +76,7 @@ export async function renderSceneReferencePreview(record,{resourceURL=(url)=>url
     const distance=radius/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*1.15;
     camera.position.copy(center).add(remap(1,-1,.75).normalize().multiplyScalar(distance));camera.lookAt(center);camera.updateMatrixWorld(true);
     renderer=new THREE.WebGLRenderer({canvas,antialias:true,preserveDrawingBuffer:true});
-    configureWorldMaterials(layer,renderer.capabilities.maxTextureSize);
+    configureWorldPreview(layer,renderer.capabilities.maxTextureSize);
     renderer.setPixelRatio(1);renderer.setSize(width,height,false);
     renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.65;
     renderer.render(scene,camera);

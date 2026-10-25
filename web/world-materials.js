@@ -18,15 +18,18 @@ export function configureWorldLoader(loader) {
   });
 }
 
-// Captured RGB already contains the scene lighting; keep it in display color space.
-export function configureWorldMaterials(root, maxTextureSize = 4096) {
+// WebGL uses the workbench lighting rig; scene lighting is evaluated by Cycles.
+export function configureWorldPreview(root, maxTextureSize = 4096) {
   const limit = Math.min(4096, maxTextureSize);
   root.traverse(node => {
+    // Imported lights lack the scene's Cycles occlusion and can wash out PBR surfaces.
+    if (node.isLight) node.visible = false;
     const materials = Array.isArray(node.material) ? node.material : node.material ? [node.material] : [];
     for (const material of materials) {
       // Imported scene units vary; decorative viewport fog must not hide geometry.
       material.fog = false;
       if (material.userData.world_appearance !== 'captured') continue;
+      // Captured RGB already includes lighting; preserve its display colors.
       material.toneMapped = false;
       const texture = material.map, image = texture?.image;
       if (!image || Math.max(image.width, image.height) <= limit) continue;
