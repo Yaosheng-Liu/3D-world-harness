@@ -52,6 +52,11 @@ PROJECT_UNLOAD_ROUTE = re.compile(r"^/api/projects/([0-9a-f]{32})$")
 POSE_ROUTE = re.compile(r"^/api/workspace/pose/([0-9a-f]{32})$")
 
 
+def _loopback_authority(host: str) -> bool:
+    match = re.fullmatch(r"(?:localhost|127\.0\.0\.1|\[::1\]):([0-9]{1,5})", host)
+    return bool(match and 0 < int(match[1]) <= 65535)
+
+
 class _DataDirLock:
     """Keep a second server from overwriting this data directory's state."""
 
@@ -176,14 +181,23 @@ def _make_server_unlocked(
                 public_url = urlsplit(public_base_url)
                 allowed.add(public_url.netloc)
                 origins.add(public_base_url)
-            if self.headers.get("Host") not in allowed:
-                raise APIError(403, "request host is not configured for this workbench")
+            host = self.headers.get("Host", "")
+            if host not in allowed:
+                # SSH may map a different client port onto this loopback-only service.
+                if (not lan_mode and _loopback_authority(host)
+                        and ipaddress.ip_address(self.client_address[0]).is_loopback):
+                    origins = {f"http://{host}"}
+                else:
+                    raise APIError(403, "request host is not configured for this workbench")
             origin = self.headers.get("Origin")
             if origin and origin not in origins:
                 raise APIError(403, "cross-origin request refused")
 
         def _browser_url(self, session_id: str) -> str:
-            return browser_url(session_id, self.server.server_port, self.context, prefixed=bool(self.project_prefix))
+            url = browser_url(session_id, self.server.server_port, self.context, prefixed=bool(self.project_prefix))
+            if not lan_mode:
+                url = urlsplit(url)._replace(netloc=self.headers["Host"]).geturl()
+            return url
 
         def _select_context(self, path: str) -> str:
             match = PROJECT_ROUTE.fullmatch(path)
@@ -354,7 +368,8 @@ def _make_server_unlocked(
                 except ValueError:
                     local_peer = False
                 local_hosts = {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}
-                if not local_peer or self.headers.get("Host") not in local_hosts:
+                host = self.headers.get("Host", "")
+                if not local_peer or (host not in local_hosts and (lan_mode or not _loopback_authority(host))):
                     raise APIError(403, "workbench opener is available only on the service host")
                 if self.command != "GET":
                     raise APIError(405, "workbench opener accepts GET")
