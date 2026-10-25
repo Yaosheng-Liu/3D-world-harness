@@ -2,10 +2,12 @@ from playwright.sync_api import sync_playwright
 from pathlib import Path
 import argparse
 import json
+import base64
 
 parser = argparse.ArgumentParser(description='Validate a running world workbench with real Cycles renders.')
 parser.add_argument('--url', required=True)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--expect-denoiser', action='store_true')
 args = parser.parse_args()
 out=args.output
 out.mkdir(parents=True, exist_ok=True)
@@ -15,7 +17,8 @@ with sync_playwright() as p:
  page.on('pageerror',lambda e:errors.append(str(e)))
  def response(r):
   if r.request.method=='POST' and r.url.endswith('/cycles-preview'):
-   data=r.json();data.pop('image',None);renders.append({'status':r.status,**data})
+   data=r.json();image=data.pop('image',None);renders.append({'status':r.status,**data})
+   if image:(out/f'cycles-{len(renders):02d}.png').write_bytes(base64.b64decode(image.split(',',1)[1]))
  page.on('response',response)
  def instrument(route):
   r=route.fetch();route.fulfill(response=r,body=r.text()+'\nwindow.__review={state,camera,renderer,controls,THREE,cyclesPreview};')
@@ -53,6 +56,9 @@ with sync_playwright() as p:
  page.wait_for_function("!document.querySelector('.cycles-preview-image').hidden",timeout=120000)
  assert all(r['status']==200 and r['max_projection_error_px'] < .002 for r in renders),renders
  page.screenshot(path=str(out/'manual.png'))
+ if args.expect_denoiser:
+  assert all(r.get('denoiser')=='OpenImageDenoise' and r['samples']==32 for r in renders),renders
+  assert '已降噪' in page.locator('#cycles-status').inner_text()
  assert not errors,errors
  (out/'result.json').write_text(json.dumps({'renders':renders,'page_errors':errors},indent=2))
  print('PASS',json.dumps({'renders':renders,'page_errors':errors}),flush=True)

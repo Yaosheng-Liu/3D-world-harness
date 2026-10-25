@@ -1,5 +1,6 @@
 """Render a browser camera from an immutable world build; never save the blend."""
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -29,15 +30,22 @@ def main():
     # Probe at scene-scale depth to avoid float32 cancellation far from the origin.
     projection = check_projection(scene, camera, view, probe_distance=max(1, camera.location.length))
     scene.render.engine = "CYCLES"
-    scene.cycles.device, scene.cycles.samples = "CPU", 16
+    library = os.environ.get("SCENE_WORLD_OIDN_LIBRARY")
+    scene.cycles.device, scene.cycles.samples = "CPU", 32 if library else 16
     scene.cycles.use_denoising = False
+    if library:
+        from oidn_blender import prepare_passes, denoise
+        prepare_passes(scene, output)
     scene.render.resolution_percentage = 100
     scene.render.film_transparent = True
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.filepath = str(output / "preview.png")
     bpy.ops.render.render(write_still=True)
-    report = {"engine": "Cycles", "samples": 16, "elapsed_seconds": time.monotonic()-started,
+    if library:
+        denoise(scene, output, library)
+    report = {"engine": "Cycles", "samples": scene.cycles.samples,
+              "denoiser": "OpenImageDenoise" if library else None, "elapsed_seconds": time.monotonic()-started,
               "time_sec": job["time_sec"], **projection}
     (output / "report.json").write_text(json.dumps(report))
 

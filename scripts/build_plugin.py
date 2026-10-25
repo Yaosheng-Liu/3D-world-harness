@@ -29,7 +29,7 @@ FIXED_FILES = (
     "scripts/configure_plugin.py",
     "scripts/start_blank_workbench.py",
     "scripts/check_workbench_ready.py",
-    "docs/physical-world.md", "scripts/world.py", "scripts/world_blender.py", "scripts/cycles_preview_blender.py",
+    "docs/physical-world.md", "scripts/world.py", "scripts/world_blender.py", "scripts/cycles_preview_blender.py", "scripts/oidn_blender.py",
     "examples/physical_world/scene.json", "docs/multiview-reconstruction.md",
     "scripts/reconstruct_multiview.py", "scripts/multiview_uv.py",
     "scripts/review_reconstruction.py", "scripts/review_editability_blender.py",

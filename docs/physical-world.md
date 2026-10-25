@@ -85,9 +85,33 @@ CLI 模式和 MCP Events 模式均提供同一组工具：
 
 预览按显示 GLB 的内容哈希匹配其已发布 Blender 工程，不使用尚未发布的新世界。相机从 glTF Y-up 转到 Blender Z-up，保留透视偏移、画幅、裁剪距离及动画时间；返回投影核验误差。Blender 工程和模型资产不会被预览改写。
 
-首版使用 CPU、8 线程、16 采样，网页最长边最多 960 像素；一次服务只运行一个预览，90 秒超时。预览期间仍能旋转和编辑，渲染失败会显示原因并保留实时 3D。仅支持现有 world 发布的完整模型；普通导入 GLB 或在显示层另行改变整体变换的模型不会显示入口。Cycles 使用构建中保存的材质和照明，不加入网页装饰网格、选择描边或雾效，也不会自动补齐几何、分离照片中的光照或完成物理标定。
+预览使用 CPU、8 线程；配置 Open Image Denoise 后为32采样并降噪，未配置时保留16采样且明确显示「未降噪」。网页最长边最多960像素；一次服务只运行一个预览，90 秒超时。预览期间仍能旋转和编辑，渲染失败会显示原因并保留实时 3D。仅支持现有 world 发布的完整模型；普通导入 GLB 或在显示层另行改变整体变换的模型不会显示入口。Cycles 使用构建中保存的材质和照明，不加入网页装饰网格、选择描边或雾效，也不会自动补齐几何、分离照片中的光照或完成物理标定。
 
-接口：`GET /api/workspace/cycles-preview` 检查可用性；`POST` 接收显示版本、Blender/OpenGL 相机矩阵、内参、裁剪距离和时间，需要浏览器 capability。验证可运行 `python3 -m unittest discover -s backend/tests -p test_cycles_preview.py`；安装 Playwright 的环境可运行 `python3 scripts/test_cycles_preview_browser.py --url http://127.0.0.1:18779/ --output /tmp/cycles-review`，该检查只操作测试浏览器中的视角与预览控件。
+#### 配置独立降噪库
+
+运行工具台前设置 `SCENE_WORLD_OIDN_LIBRARY`，指向 Open Image Denoise 2.x 的动态库。例如 Spark：
+
+```bash
+export SCENE_WORLD_OIDN_LIBRARY=/home/yao/3D-harness/runtime/oidn-2.5.1/lib/libOpenImageDenoise.so
+```
+
+降噪读取 Cycles 的32位线性颜色、底色和法线通道，在独立 Python 进程运行 CPU RT 滤波，再由 Blender 按原色彩管理输出 PNG，保留 alpha。独立进程避免 OIDN 与 Blender 已加载的原生库冲突；该 Python（Blender 的 `sys.executable`）需要 NumPy。已配置的库若加载或执行失败，请求明确报错，不把未降噪图当作成功结果。渲染进程和临时通道沿用请求的90秒限制与临时目录，不保存或改写源 `.blend`。
+
+Spark 的系统 Blender 4.0.2 未内置降噪，本次使用官方 [OIDN 2.5.1](https://github.com/RenderKit/oidn/releases/tag/v2.5.1) 源码和 [ISPC 1.30.0 ARM64](https://github.com/ispc/ispc/releases/tag/v1.30.0)，在项目 runtime 内构建；系统 Blender 和系统库保持原样。解压源码和编译器后，可用下面的配置复现（需要 CMake、C++ 编译器及 TBB 开发文件）：
+
+```bash
+cmake -S oidn-2.5.1 -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$PWD/installed" \
+  -DISPC_EXECUTABLE="$PWD/ispc-v1.30.0-linux.aarch64/bin/ispc" \
+  -DOIDN_DEVICE_CPU=ON -DOIDN_DEVICE_SYCL=OFF -DOIDN_DEVICE_CUDA=OFF \
+  -DOIDN_APPS=ON -DOIDN_FILTER_RTLIGHTMAP=OFF
+cmake --build build -j 8
+cmake --install build
+```
+
+当前960×540房间验证中，32采样加降噪约33秒；128采样未降噪约109秒且仍有颗粒。耗时随场景和视角变化；降噪有助于浏览，不代替未滤波原始渲染的质量验收。可用 `SCENE_WORLD_OIDN_LIBRARY=... blender --background --factory-startup --threads 8 --python-exit-code 1 --python scripts/test_cycles_denoise_blender.py -- --output /tmp/denoise-check` 验证透明边缘和颜色保持。
+
+接口：`GET /api/workspace/cycles-preview` 检查可用性；`POST` 接收显示版本、Blender/OpenGL 相机矩阵、内参、裁剪距离和时间，需要浏览器 capability。验证可运行 `python3 -m unittest discover -s backend/tests -p test_cycles_preview.py`；安装 Playwright 的环境可运行 `python3 scripts/test_cycles_preview_browser.py --url http://127.0.0.1:18779/ --output /tmp/cycles-review --expect-denoiser`，该检查只操作测试浏览器中的视角与预览控件。
 
 构建检查 Blender 重开、对象身份和层级、GLB 结构与资产哈希。仿真使用固定步长，输出带版本和时间戳的轨迹，以及非有限状态、接触穿透、关节限位等检查。动画发布要求对应物理检查通过。源文件、世界版本或构建产物改变后，旧构建不能继续通过世界发布入口。
 

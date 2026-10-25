@@ -48,7 +48,7 @@ export function createCyclesPreview({api, viewport, capture}) {
       if (key(capture()) !== requested || interacting || generation !== startedGeneration) return;
       image.hidden = false;
       shown = requested;
-      status.textContent = `Cycles · ${result.elapsed_seconds.toFixed(1)} 秒`;
+      status.textContent = `Cycles · ${result.denoiser ? '已降噪' : '未降噪'} · ${result.elapsed_seconds.toFixed(1)} 秒`;
     } catch (error) {
       if (key(capture()) === requested) status.textContent = '预览失败：' + error.message;
     } finally {
