@@ -245,6 +245,17 @@ class ReconstructionPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reference image bytes changed"):
             planning_image(self.project, "cabinet", "1", "reference")
 
+    def test_historical_run_does_not_follow_latest_planning_pointer(self):
+        saved = json.loads((self.project / "object_pipeline/status.json").read_text())
+        self.write("object_pipeline/old-run/status.json", saved)
+        self.write("object_pipeline/status.json", {"stage": "planning"})
+        with self.assertRaisesRegex(ValueError, "not available"):
+            planning_image(self.project, "cabinet", "1", "reference")
+        source = planning_image(self.project, "cabinet", "1", "reference", "old-run")
+        self.assertEqual(source, self.project / "observations/train/000001.png")
+        overlay = planning_image(self.project, "cabinet", "1", "mask", "old-run")
+        self.assertEqual(Image.open(io.BytesIO(overlay)).size, (20, 20))
+
     def geometry(self):
         mesh = self.project / "object_pipeline/run/cabinet.obj"
         mesh.write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")

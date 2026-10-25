@@ -709,6 +709,7 @@ def export_reconstruction(mesh, dense, data, manifest, output, voxel, stats,
         'views': views,
     }
     write_json(output / 'world/scene.json', scene)
+    write_json(output / 'initialization/scene.json', scene)
     summary_keys = ('triangles', 'vertices', 'textured_face_fraction',
                     'textured_area_fraction', 'boundary_edges', 'timing')
     print('COMPLETE', json.dumps({key: report[key] for key in summary_keys}), flush=True)

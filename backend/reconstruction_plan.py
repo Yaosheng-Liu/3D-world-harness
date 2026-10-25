@@ -287,10 +287,13 @@ def controller_running(project, pid, *script_names):
             and any((cwd / argument).resolve() in scripts for argument in command if argument.endswith(".py")))
 
 
-def planning_status(project):
-    path = Path(project) / "object_pipeline/status.json"
+def planning_status(project, run_id=None):
+    if run_id is not None and (not run_id or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for c in run_id)):
+        raise ValueError("invalid planning run")
+    path = Path(project) / "object_pipeline" / (f"{run_id}/status.json" if run_id else "status.json")
     if not path.is_file():
         return None
+    path = project_file(Path(project).resolve(), str(path.relative_to(project)))
     status = read_json(path)
     if status["stage"] in ACTIVE_STAGES and status.get("pid"):
         if not controller_running(project, status["pid"], "run_reconstruction.py"):
@@ -316,10 +319,10 @@ def planning_status(project):
     return status
 
 
-def planning_image(project, object_id, view_id, kind):
+def planning_image(project, object_id, view_id, kind, run_id=None):
     from PIL import Image
     import io
-    status = planning_status(project)
+    status = planning_status(project, run_id)
     if not status or not status.get("plan_path") or kind not in {"reference", "mask"}:
         raise ValueError("planning images are not available")
     plan = read_json(project_file(project, status["plan_path"]))

@@ -34,6 +34,7 @@ from world_service import WORLD_TOOL_MAP, WorldService, displayed_preview
 from cycles_preview import published_build, render_preview
 from reconstruction_review import accept_candidate, review_status, review_image
 from reconstruction_plan import planning_status, planning_image
+from reconstruction_history import reconstruction_history, history_asset
 from world_editor import editor_state, edit_transform
 
 
@@ -605,13 +606,25 @@ def _make_server_unlocked(
             if self.command == "GET" and path == "/api/workspace/reconstruction":
                 return self._send_json(200, {**review_status(project_root), "planning": planning_status(project_root),
                                              "preview": displayed_preview(store)})
+            if self.command == "GET" and path == "/api/workspace/reconstruction/history":
+                return self._send_json(200, reconstruction_history(project_root))
+            if self.command == "GET" and path == "/api/workspace/reconstruction/history/asset":
+                try:
+                    return self._send_file(history_asset(project_root, query.get("entry", [""])[0], query.get("asset", [""])[0]))
+                except (ValueError, OSError) as exc:
+                    raise APIError(409, str(exc)) from exc
+            if self.command == "GET" and path == "/api/workspace/object-plan":
+                try:
+                    return self._send_json(200, planning_status(project_root, query.get("run", [None])[0]))
+                except (ValueError, OSError) as exc:
+                    raise APIError(409, str(exc)) from exc
             if self.command == "POST" and path == "/api/workspace/reconstruction/preview":
                 self._require_browser_capability()
                 return self._send_json(200, WorldService(project_root, store).call("workspace_preview_world", self._read_json()))
             if self.command == "GET" and path == "/api/workspace/object-plan/image":
                 try:
                     result = planning_image(project_root, query.get("object_id", [""])[0],
-                                            query.get("view_id", [""])[0], query.get("kind", [""])[0])
+                                            query.get("view_id", [""])[0], query.get("kind", [""])[0], query.get("run", [None])[0])
                     if isinstance(result, Path):
                         return self._send_file(result)
                     self.send_response(200)
