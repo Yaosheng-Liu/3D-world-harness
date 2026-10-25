@@ -1,16 +1,17 @@
 const stages = {
-  not_started:'尚未启动重建审核', modeling:'建模中', checking:'检查候选', reviewing:'独立审核中',
-  reviewed:'审核结束', repairing:'准备返工', publishing:'发布中', accepted:'已通过并发布',
+  not_started:'尚未启动重建审核', modeling:'逐物体精细建模中', checking:'检查候选', reviewing:'独立审核中',
+  reviewed:'审核结束', repairing:'建模 Agent 准备返工', publishing:'发布中', accepted:'已通过并发布',
   needs_revision:'待改进', failed:'流程中断', interrupted:'流程已停止', edited:'已编辑，待复核'
 };
 const busyStages = new Set(['modeling','checking','reviewing','reviewed','repairing','publishing']);
 const planningStages = {
-  planned:'物体计划已生成，等待分割', segmented:'分割阶段结束，等待几何校验',
-  planning:'计划 Agent 拆解场景', segmenting:'分割与核对物体', geometry:'融合物体几何',
-  ready_for_modeling:'物体证据就绪，等待建模', modeling:'按物体建模中', reviewing:'审核物体还原',
-  needs_revision:'物体流程待改进', accepted:'已通过物体流程验收', failed:'物体流程中断', interrupted:'物体流程已停止'
+  planned:'初始化计划已生成，等待分割', segmented:'初始分割结束，等待几何融合',
+  planning:'初始化：计划 Agent 拆解场景', segmenting:'初始化：分割与核对物体', geometry:'初始化：融合观测几何',
+  ready_for_modeling:'初始证据可用，等待精细建模', modeling:'逐物体精细建模中', reviewing:'审核物体还原',
+  repairing:'建模 Agent 准备返工',
+  needs_revision:'待建模 Agent 返工', accepted:'建模审核已通过并发布', failed:'物体流程中断', interrupted:'物体流程已停止'
 };
-const planningBusyStages = new Set(['planning','segmenting','geometry','modeling','reviewing']);
+const planningBusyStages = new Set(['planning','segmenting','geometry','modeling','reviewing','repairing']);
 const evidenceStates = {
   pending:'待处理', segmented:'已分割', missing:'未检出', missed:'未检出', ambiguous:'待核实',
   uncertain:'待核实', partial:'部分完成', failed:'失败', ready:'就绪', completed:'已完成',
@@ -19,9 +20,14 @@ const evidenceStates = {
   not_required:'无需执行', skipped:'未执行', fused:'已融合'
 };
 const pipelineSteps = [
-  ['reference','参考资料'], ['planning','场景计划'], ['segmenting','实例分割'], ['geometry','物体几何'],
-  ['modeling','建模'], ['checking','程序检查'], ['reviewing','独立审核'], ['accepted','通过发布']
+  ['reference','参考资料',''], ['initialization','场景初始化','计划 / SAM / DA3 / TSDF'],
+  ['modeling','逐物体精细建模','补全 / 拆分 / 材质'], ['checking','程序检查','完整性 / 可编辑性'],
+  ['reviewing','独立审核','对照原图与编辑结果'], ['accepted','通过发布','']
 ];
+const issueCategories = {
+  inventory:'物体清单', segmentation:'分割与归属', geometry:'几何', appearance:'外观与材质',
+  editability:'可编辑性', planning:'物体清单', modeling:'建模'
+};
 
 export function createReconstructionWorkflow({api, resourceURL, loadScene, focusObject, alignView}) {
   const bar = document.createElement('div');
@@ -33,12 +39,13 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
   dialog.id = 'reconstruction-dialog';
   dialog.setAttribute('aria-label','重建流程与物体编辑');
   dialog.innerHTML = `<div class="flow-heading"><div><small>3D-world harness</small><h2>真实场景重建</h2></div><button type="button" id="flow-close" aria-label="关闭重建流程">×</button></div>
-    <ol class="flow-steps">${pipelineSteps.map(([key,label]) => `<li data-stage="${key}">${label}</li>`).join('')}</ol>
+    <ol class="flow-steps">${pipelineSteps.map(([key,label,detail]) => `<li data-stage="${key}"><span>${label}</span>${detail ? `<small>${detail}</small>` : ''}</li>`).join('')}</ol>
+    <p class="flow-review-loop">审核反馈 → 建模 Agent 返工 → 再次审核</p>
     <p id="flow-summary" role="status"></p><div id="flow-facts" class="flow-facts"></div>
-    <section id="flow-plan" class="flow-plan" hidden aria-label="计划物体与分割证据">
-    <div class="flow-plan-heading"><h3>计划物体与分割证据</h3><span id="flow-plan-state" class="flow-badge"></span></div>
+    <section id="flow-plan" class="flow-plan" hidden aria-label="场景初始化与观测证据">
+    <div class="flow-plan-heading"><h3>场景初始化与观测证据</h3><span id="flow-plan-state" class="flow-badge"></span></div>
     <p id="flow-plan-summary"></p><p id="flow-plan-counts" class="flow-muted"></p>
-    <div class="flow-plan-columns"><div><div id="flow-plan-list" class="flow-plan-list" aria-label="计划物体清单"></div>
+    <div class="flow-plan-columns"><div><div id="flow-plan-list" class="flow-plan-list" aria-label="初始物体清单"></div>
     <div id="flow-unresolved"></div></div><div class="flow-plan-detail">
     <h4 id="flow-plan-object-name"></h4><p id="flow-plan-object-notes"></p>
     <p id="flow-plan-publication" class="flow-muted"></p><button id="flow-plan-focus" type="button" disabled>定位当前已发布物体</button>
@@ -132,7 +139,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     el('plan-view').disabled = !obj?.evidence.length;
     el('plan-image-status').textContent = !view ? '尚无可查看的图像证据。'
       : view.has_mask ? '掩码用于核对像素归属；几何和可编辑性另行验收。'
-      : '此视角尚无有效掩码，物体仍保留在计划中。';
+      : '此视角尚无有效掩码，物体仍保留，由建模 Agent 对照原图处理。';
     for (const kind of ['reference','mask']) {
       const image = el('plan-' + kind);
       image.removeAttribute('src');
@@ -163,7 +170,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     if (!plan) return;
     el('plan-state').textContent = planningStages[plan.stage] || plan.stage;
     el('plan-summary').textContent = plan.error || plan.reason || plan.summary || '计划物体将按原始图像证据逐项核对。';
-    el('plan-counts').textContent = `${plan.objects.length} 个计划对象 · ${plan.unresolved.length} 项待解决 · 计划清单不代表已完成场景`;
+    el('plan-counts').textContent = `${plan.objects.length} 个初始对象 · ${plan.unresolved.length} 项初始化缺口 · 处理结果见候选审核`;
     const byId = new Map(plan.objects.map(obj => [obj.id,obj]));
     const ordered = [], visited = new Set();
     function addBranch(obj, depth) {
@@ -184,9 +191,9 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     if (!plan.objects.length) el('plan-list').textContent = '计划 Agent 尚未提交物体清单。';
     el('unresolved').replaceChildren(...plan.unresolved.map(item => {
       const article = document.createElement('article'); article.className = 'flow-issue';
-      const heading = document.createElement('strong'); heading.textContent = '待解决 · ' + (item.object_id || '场景');
+      const heading = document.createElement('strong'); heading.textContent = '初始化缺口 · ' + (item.object_id || '场景');
       const reason = document.createElement('p'); reason.textContent = item.reason;
-      const action = document.createElement('p'); action.textContent = '下一步：' + item.next_action;
+      const action = document.createElement('p'); action.textContent = '建模任务：' + item.next_action;
       article.append(heading,reason,action);
       if (byId.has(item.object_id)) { const button = document.createElement('button'); button.type = 'button'; button.textContent = '查看物体证据'; button.onclick = () => selectPlannedObject(item.object_id); article.append(button); }
       return article;
@@ -202,20 +209,24 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     bar.dataset.active = String(active);
     el('stage').textContent = (status.stage === 'modeling' || planStage === 'modeling') && workspace.approvals?.length
       ? '建模等待确认' : plan ? planningStages[planStage] || planStage : stages[status.stage] || status.stage;
-    el('version').textContent = `显示 v${workspace.scene_revision ?? '—'}${plan ? ' · 物体计划' : status.round ? ` · 第 ${status.round}/${status.max_rounds} 轮` : ''}`;
+    el('version').textContent = `显示 v${workspace.scene_revision ?? '—'}${plan ? ' · 物体重建' : status.round ? ` · 第 ${status.round}/${status.max_rounds} 轮` : ''}`;
     el('summary').textContent = plan ? plan.error || plan.reason || plan.summary || planningStages[planStage] : status.error || status.reason || (status.stage === 'modeling'
-      ? '建模 Agent 正在制作候选。当前工具台保留上一版；候选完成后进入独立检查与审核。'
+      ? '建模 Agent 正在基于初始场景与原始证据逐物体细化候选；候选完成后进入检查与审核。'
       : status.stage === 'reviewing' ? '审核 Agent 正在检查冻结候选；问题单将回传建模 Agent。' : status.summary || '参考资料就绪后，可启动建模与独立审核。');
     const displayStage = planStage || status.stage;
-    const currentStep = plan && ['needs_revision','failed','interrupted'].includes(displayStage) ? null : ({planned:'segmenting',segmented:'geometry',repairing:'modeling',reviewed:'reviewing',needs_revision:'reviewing',edited:'reviewing',publishing:'accepted',ready_for_modeling:'modeling'})[displayStage] || displayStage;
+    const currentStep = ['failed','interrupted'].includes(displayStage) ? null : ({
+      planning:'initialization',planned:'initialization',segmenting:'initialization',segmented:'initialization',geometry:'initialization',
+      repairing:'modeling',needs_revision:'modeling',ready_for_modeling:'modeling',reviewed:'reviewing',edited:'reviewing',publishing:'accepted'
+    })[displayStage] || displayStage;
     const completed = new Set(plan?.completed_stages || []);
+    if (['planning','segmenting','geometry'].every(stage => completed.has(stage))) completed.add('initialization');
     for (const node of dialog.querySelectorAll('.flow-steps li')) {
       node.classList.toggle('current', node.dataset.stage === currentStep);
       node.classList.toggle('done', completed.has(node.dataset.stage) || (!plan && node.dataset.stage === 'accepted' && status.accepted === true));
     }
     const facts = [
       ['参考资料', workspace.reference_clip ? `${workspace.reference_clip.frames.length} 帧 · 已接入` : '未接入片段'],
-      ['计划 Agent', modelLabel(plan?.planner)], ['建模 Agent', modelLabel(status.builder)], ['审核 Agent', modelLabel(status.reviewer)],
+      ['初始化 · 计划 Agent', modelLabel(plan?.planner)], ['建模 Agent', modelLabel(status.builder)], ['审核 Agent', modelLabel(status.reviewer)],
       [plan ? '已有候选 · 程序检查' : '程序检查', status.checks ? (Object.values(status.checks).every(Boolean) ? '通过' : '发现问题') : '等待候选'],
       [plan ? '已有审核 · 外观 / 结构 / 编辑' : '外观 / 结构 / 编辑', status.dimensions ? Object.values(status.dimensions).map(v => ({passed:'通过',failed:'未通过',unknown:'待核实'})[v]).join(' / ') : '尚未验收'],
       ['物理', '本阶段暂缓']
@@ -231,12 +242,14 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     }
     el('issues').replaceChildren(...(status.issues || []).map(issue => {
       const card = document.createElement('article'); card.className = 'flow-issue';
-      const heading = document.createElement('strong'); heading.textContent = `${({blocking:'阻塞',major:'主要',minor:'次要'})[issue.severity]} · ${issue.object_id}${issue.target ? ' · ' + ({planning:'返回计划',segmentation:'修正分割',modeling:'继续建模'})[issue.target] : ''}`;
+      const category = issue.category || issue.target;
+      const heading = document.createElement('strong'); heading.textContent = `${({blocking:'阻塞',major:'主要',minor:'次要'})[issue.severity]} · ${issue.object_id}${category ? ' · ' + (issueCategories[category] || category) : ''}`;
+      const owner = document.createElement('p'); owner.className = 'flow-issue-owner'; owner.textContent = '交给建模 Agent';
       const evidence = document.createElement('p'); evidence.textContent = issue.evidence;
       const criterion = document.createElement('p'); criterion.textContent = '复验标准：' + issue.acceptance_criterion;
       const button = document.createElement('button'); button.type = 'button'; button.textContent = '查看 ' + issue.view_id;
       button.onclick = () => { el('view').value = issue.view_id; showView(issue.region); el('comparison').scrollIntoView({block:'nearest'}); };
-      card.append(heading,evidence,criterion,button); return card;
+      card.append(heading,owner,evidence,criterion,button); return card;
     }));
     el('record').textContent = JSON.stringify({run_id:status.run_id, candidate_id:status.candidate_id,
       requested_reviewer:status.reviewer?.requested_model, actual_reviewer:status.reviewer?.model,

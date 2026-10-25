@@ -11,8 +11,8 @@ from PIL import Image
 from jsonschema import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from reconstruction_plan import (candidate_coverage, file_hash, planning_image,
-    unresolved_objects, validate_geometry, validate_plan, validate_segments)
+from reconstruction_plan import (file_hash, planning_image,
+    unresolved_objects, validate_geometry, validate_modeling_report, validate_plan, validate_segments)
 
 
 class ReconstructionPlanTests(unittest.TestCase):
@@ -110,8 +110,9 @@ class ReconstructionPlanTests(unittest.TestCase):
             row.update(status="missing", observations=[], reason="text and box did not yield a usable mask")
         validate_segments(self.project, self.plan_path, self.segments)
         pending = {row["object_id"]: row for row in unresolved_objects(self.plan, self.segments)}
-        self.assertTrue(pending["cabinet"]["blocking"])
+        self.assertFalse(pending["cabinet"]["blocking"])
         self.assertFalse(pending["drawer"]["blocking"])
+        self.assertTrue(all(row["requires_review"] for row in pending.values()))
         self.segments["objects"].pop()
         with self.assertRaisesRegex(ValueError, "retain every planned object"):
             validate_segments(self.project, self.plan_path, self.segments)
@@ -152,29 +153,77 @@ class ReconstructionPlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_segments(self.project, self.plan_path, self.segments)
 
-    def test_candidate_coverage_requires_objects_and_edit_hierarchy(self):
-        scene = {"objects": [{"id": "cabinet", "parent_id": None}, {"id": "drawer", "parent_id": "cabinet"}]}
-        self.assertTrue(candidate_coverage(self.plan, scene)["passed"])
-        scene["objects"][1]["parent_id"] = None
-        self.assertEqual(candidate_coverage(self.plan, scene)["hierarchy_mismatches"], ["drawer"])
-        scene["objects"].pop()
-        self.assertEqual(candidate_coverage(self.plan, scene)["missing_objects"], ["drawer"])
-
-    def test_materialized_group_must_not_break_parent_chain(self):
-        plan = copy.deepcopy(self.plan)
-        plan["objects"].append(self.object("drawer_group", parent="cabinet", kind="group", strategy="group", observations=[]))
-        plan["objects"][2]["parent_id"] = "drawer_group"
-        scene = {"objects": [{"id": "cabinet", "parent_id": None}, {"id": "drawer_group", "parent_id": None},
-                             {"id": "drawer", "parent_id": "drawer_group"}]}
-        self.assertFalse(candidate_coverage(plan, scene)["passed"])
-        scene["objects"][1]["parent_id"] = "cabinet"
-        self.assertTrue(candidate_coverage(plan, scene)["passed"])
-
-    def test_unexplained_regions_block_completion(self):
+    def test_unexplained_regions_require_modeling_and_review_without_blocking_builder(self):
         self.plan["unexplained_regions"] = [{"frame_index": 1, "box": [.1, .1, .2, .2], "description": "unidentified object"}]
-        self.assertTrue(unresolved_objects(self.plan)[0]["blocking"])
-        scene = {"objects": [{"id": "cabinet", "parent_id": None}, {"id": "drawer", "parent_id": "cabinet"}]}
-        self.assertFalse(candidate_coverage(self.plan, scene)["passed"])
+        todo = unresolved_objects(self.plan)[0]
+        self.assertFalse(todo["blocking"])
+        self.assertTrue(todo["requires_review"])
+        self.assertEqual(todo["object_id"], "scene")
+
+    def modeling_report(self):
+        return {"schema_version": 1, "plan_sha256": file_hash(self.project / self.plan_path),
+                "summary": "Modeler accounted for all initial hypotheses using source evidence",
+                "objects": [{"plan_id": "cabinet", "scene_ids": ["cabinet_body", "cabinet_door"],
+                             "resolution": "modeled", "reason": "Cabinet split into editable body and door", "frame_indices": [1, 7]},
+                            {"plan_id": "drawer", "scene_ids": ["drawer_body"], "resolution": "modeled",
+                             "reason": "Drawer reconstructed independently", "frame_indices": [1]}],
+                "regions": []}
+
+    def modeled_scene(self):
+        return {"objects": [{"id": "cabinet_body", "parent_id": None},
+                            {"id": "cabinet_door", "parent_id": "cabinet_body"},
+                            {"id": "drawer_body", "parent_id": "cabinet_body"}]}
+
+    def test_modeling_report_allows_explicit_split_merge_and_evidenced_exclusion(self):
+        report, scene = self.modeling_report(), self.modeled_scene()
+        self.assertTrue(validate_modeling_report(self.project, self.plan_path, scene, report)["passed"])
+        # Geometry grouping is a builder decision; the critic still judges whether
+        # this merge preserves the requested editability and matches the sources.
+        report["objects"][1]["scene_ids"] = ["cabinet_body"]
+        self.assertTrue(validate_modeling_report(self.project, self.plan_path, scene, report)["passed"])
+        report["objects"][1].update(scene_ids=[], resolution="excluded",
+                                    reason="Initial drawer hypothesis was the same cabinet door, confirmed in frame 1")
+        self.assertTrue(validate_modeling_report(self.project, self.plan_path, scene, report)["passed"])
+
+    def test_modeling_report_cannot_silently_drop_initial_objects_or_regions(self):
+        report = self.modeling_report()
+        report["objects"].pop()
+        coverage = validate_modeling_report(self.project, self.plan_path, self.modeled_scene(), report)
+        self.assertFalse(coverage["passed"])
+        self.assertEqual(coverage["missing_objects"], ["drawer"])
+        self.plan["unexplained_regions"] = [{"frame_index": 1, "box": [.1, .1, .2, .2], "description": "unidentified object"}]
+        self.write(self.plan_path, self.plan)
+        coverage = validate_modeling_report(self.project, self.plan_path, self.modeled_scene(), self.modeling_report())
+        self.assertFalse(coverage["passed"])
+        self.assertEqual(coverage["unaddressed_regions"], [0])
+
+    def test_modeling_report_rejects_unknown_scene_ids_and_unsupported_exclusions(self):
+        report = self.modeling_report()
+        report["objects"][0]["scene_ids"] = ["does_not_exist"]
+        with self.assertRaises((ValueError, ValidationError)):
+            validate_modeling_report(self.project, self.plan_path, self.modeled_scene(), report)
+        for frames in ([], [99]):
+            report = self.modeling_report()
+            report["objects"][1].update(scene_ids=[], resolution="excluded", frame_indices=frames,
+                                        reason="Claimed duplicate without valid source evidence")
+            with self.subTest(frames=frames), self.assertRaises((ValueError, ValidationError)):
+                validate_modeling_report(self.project, self.plan_path, self.modeled_scene(), report)
+
+    def test_region_report_resolves_initial_uncertainty_without_mutating_plan(self):
+        self.plan["unexplained_regions"] = [{"frame_index": 1, "box": [.1, .1, .2, .2], "description": "unidentified object"}]
+        self.write(self.plan_path, self.plan)
+        original_hash = file_hash(self.project / self.plan_path)
+        report, scene = self.modeling_report(), self.modeled_scene()
+        scene["objects"].append({"id": "new_lamp", "parent_id": None})
+        report["regions"] = [{"region_index": 0, "scene_ids": ["new_lamp"], "resolution": "modeled",
+                              "reason": "Identified and modeled the lamp visible in this source region", "frame_indices": [1]}]
+        self.assertTrue(validate_modeling_report(self.project, self.plan_path, scene, report)["passed"])
+        self.assertEqual(file_hash(self.project / self.plan_path), original_hash)
+        report["regions"][0].update(scene_ids=[], resolution="unresolved", reason="Still cannot establish its shape")
+        self.assertFalse(validate_modeling_report(self.project, self.plan_path, scene, report)["passed"])
+        report["regions"][0]["region_index"] = 1
+        with self.assertRaises((ValueError, ValidationError)):
+            validate_modeling_report(self.project, self.plan_path, scene, report)
 
     def test_planning_images_serve_original_or_verified_mask_overlay(self):
         source = planning_image(self.project, "cabinet", "1", "reference")

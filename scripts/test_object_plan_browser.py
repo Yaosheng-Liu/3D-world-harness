@@ -53,7 +53,7 @@ def main():
                    'summary': '上次审核记录（合成测试）。',
                    'views': [{'id': 'view_0'}, {'id': 'source_24', 'reference_only': True}],
                    'issues': [{'id': 'missing-lamp', 'object_id': 'scene', 'view_id': 'source_24',
-                               'target': 'planning', 'severity': 'major', 'region': [.7, .4, .9, .9],
+                               'category': 'inventory', 'severity': 'major', 'region': [.7, .4, .9, .9],
                                'evidence': '原图中发现清单外物体（合成测试）。', 'acceptance_criterion': '补充物体清单'}],
                    'planning': {'stage': 'ready_for_modeling', 'run_id': 'synthetic-plan',
                                 'updated_at': '2026-10-25T01:00:00Z',
@@ -61,7 +61,7 @@ def main():
                                 'summary': '合成浏览器测试，不代表实际重建已完成。',
                                 'completed_stages': ['reference', 'planning', 'segmenting', 'geometry'],
                                 'objects': planned,
-                                'unresolved': [{'object_id': 'lamp', 'reason': '台灯漏检', 'next_action': '换视角并补充框提示'}]}},
+                                'unresolved': [{'object_id': 'lamp', 'reason': '台灯漏检', 'next_action': '建模 Agent 对照原图补建台灯，并核对物体边界'}]}},
         'editor': {'revision': 2, 'scene_revision': 3, 'units': 'arbitrary', 'matches_display': True,
                    'objects': [{'id': 'chair', 'name': '已发布椅子', 'parent_id': None,
                                 'position': [0, 0, 0], 'rotation': [0, 0, 0],
@@ -121,14 +121,27 @@ await window.workflow.refresh(fixture.workspace,true);window.ready=true;
             assert page.locator('#flow-plan-list button').count() == 3
             assert page.locator('#flow-plan-list button').nth(1).get_attribute('data-object-id') == 'chair'
             assert '属于 room' in page.locator('[data-object-id=chair]').inner_text()
-            assert '等待建模' in page.locator('#flow-stage').inner_text()
+            assert '初始证据可用，等待精细建模' in page.locator('#flow-stage').inner_text()
+            assert '计划 / SAM / DA3 / TSDF' in page.locator('.flow-steps [data-stage=initialization]').inner_text()
+            assert '建模 Agent 返工' in page.locator('.flow-review-loop').inner_text()
+            assert '初始证据不代表最终还原质量' in page.locator('#flow-plan-counts').inner_text()
             assert '已有审核记录' in page.locator('#flow-candidate').inner_text()
             assert not page.locator('.flow-steps [data-stage=accepted]').evaluate("e=>e.classList.contains('done')")
             page.locator('#flow-issues button').click()
             assert page.locator('#flow-view').input_value() == 'source_24'
             assert page.locator('#flow-render').locator('..').locator('..').is_hidden()
             assert page.locator('#flow-align').is_disabled()
-            assert '返回计划' in page.locator('#flow-issues').inner_text()
+            assert '物体清单' in page.locator('#flow-issues').inner_text()
+            assert '交给建模 Agent' in page.locator('#flow-issues').inner_text()
+            assert '返回计划' not in page.locator('#flow-issues').inner_text()
+            # Current categories take precedence; historical target records stay readable.
+            page.evaluate("async()=>{const issue=window.fixture.status.issues[0];issue.category='appearance';issue.target='planning';await window.workflow.refresh(window.fixture.workspace,true);}")
+            assert '外观与材质' in page.locator('#flow-issues').inner_text()
+            assert '返回计划' not in page.locator('#flow-issues').inner_text()
+            page.evaluate("async()=>{const issue=window.fixture.status.issues[0];delete issue.category;issue.target='segmentation';await window.workflow.refresh(window.fixture.workspace,true);}")
+            assert '分割与归属' in page.locator('#flow-issues').inner_text()
+            assert '交给建模 Agent' in page.locator('#flow-issues').inner_text()
+            assert '修正分割' not in page.locator('#flow-issues').inner_text()
             page.locator('#flow-view').select_option('view_0')
             assert page.locator('#flow-render').locator('..').locator('..').is_visible()
             page.locator('[data-object-id=chair]').click()
@@ -147,7 +160,12 @@ await window.workflow.refresh(fixture.workspace,true);window.ready=true;
             assert '物体仍保留' in page.locator('#flow-plan-image-status').inner_text()
             assert page.locator('#flow-plan-list button').count() == 3
             page.screenshot(path=str(args.output / 'missing-object.png'))
+            page.evaluate("window.updateStage('needs_revision')")
+            assert '建模 Agent 返工' in page.locator('#flow-stage').inner_text()
+            assert page.locator('.flow-steps [data-stage=modeling]').evaluate("e=>e.classList.contains('current')")
+            assert not page.locator('.flow-steps [data-stage=initialization]').evaluate("e=>e.classList.contains('current')")
             page.evaluate("window.updateStage('segmenting')")
+            assert page.locator('.flow-steps [data-stage=initialization]').evaluate("e=>e.classList.contains('current')")
             assert page.locator('#flow-apply').is_disabled()
             page.evaluate("window.updateStage('ready_for_modeling')")
             assert page.locator('#flow-apply').is_enabled()
@@ -171,7 +189,8 @@ await window.workflow.refresh(fixture.workspace,true);window.ready=true;
                   'mask_view_selection': True, 'unpublished_object_not_editable': True,
                   'previous_review_separate': True, 'existing_editor_preserved': True,
                   'active_plan_blocks_edit': True, 'mobile_no_overflow': True,
-                  'legacy_without_plan': True, 'source_only_review_issue': True, 'page_errors': errors}
+                  'legacy_without_plan': True, 'source_only_review_issue': True, 'initialization_only': True,
+                  'all_review_feedback_to_modeler': True, 'legacy_issue_category': True, 'page_errors': errors}
         (args.output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result, indent=2))
     finally:

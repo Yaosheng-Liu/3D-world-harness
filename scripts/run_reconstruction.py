@@ -20,8 +20,9 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
-from reconstruction_plan import (PLAN_SCHEMA, observations, project_file, read_json,
-                                 unresolved_objects, validate_plan, validate_segments, validate_geometry, write_json)
+from reconstruction_plan import (PLAN_SCHEMA, MODEL_REPORT_SCHEMA, observations, project_file, read_json,
+                                 unresolved_objects, validate_plan, validate_segments, validate_geometry, write_json,
+                                 ModelingReportError, read_modeling_report, validate_modeling_report)
 from world_build import file_hash
 from world_model import WorldStore, scene_hash
 from review_reconstruction import Workbench, run as review_candidate
@@ -66,7 +67,7 @@ def contact_sheets(project, directory):
     return paths
 
 
-def run_planner(project, directory, runtime, previous=None, feedback=None):
+def run_planner(project, directory, runtime):
     directory.mkdir(parents=True, exist_ok=False)
     source_hash = file_hash(project_file(project, "observations/manifest.json"))
     schema = directory / "schema.json"
@@ -78,11 +79,9 @@ Prepared training images: {project / 'observations/manifest.json'}; source_manif
 Attached contact sheets show EVERY training image, labelled with its original frame_index. Open full-resolution originals to inspect objects and locate accurate normalized [x0,y0,x1,y1] boxes; do not estimate boxes in contact-sheet coordinates. Never use heldout images for segmentation/planning. Existing world/scene.json is context, not ground truth. Read the original images independently to discover omissions, including peripheral objects and parts swallowed by larger objects.
 Produce stable ASCII IDs, names, object/part/structure hierarchy, priority, short English SAM3 segmentation_prompt, per-object observations with frame_index and box, uncertainty and concrete acceptance_criteria. Cite at least 2 distinct good views for fuse objects, preferably 3-5 spanning viewpoints; one-view objects may use explicit model strategy with honest uncertainty. Do not confuse repeated instances across views. Groups are task-only organizational nodes, with strategy group; use a real frame/cabinet object as parent for editable parts when possible. Each pixel belongs to the most specific visible instance, not both parent and child.
 Use Chinese for user-facing names, summaries, descriptions, uncertainty and acceptance criteria; retain ASCII IDs and short English segmentation prompts. Higher priority numbers mean earlier modeling.
-geometry_strategy=fuse uses shared DA3 and per-object TSDF; model explicitly requests Blender modeling from references, without claiming measured geometry; group creates no mesh. List every important visible editable object. Unexplained visible regions remain in unexplained_regions until identified or evidenced exclusions; they block automatic modeling. Occluded unseen objects must not be invented as observations.
-Previous plan: {previous or 'none'}.
-Evidence/review feedback: {json.dumps(feedback, ensure_ascii=False) if feedback else 'none'}.
-Preserve every previous object ID, including prior excluded IDs. If a candidate was a duplicate/false detection, move its ID to excluded_objects with a concrete reason and source frame_indices; never silently delete a SAM miss. A failed SAM result means segmentation failed, not that an object does not exist. Revise bad boxes, add clearer views, clarify prompts. If reliable masks/geometric support remain unavailable but image evidence supports existence, explicitly select model strategy and describe the limitation. No automatic substitution of SAM2, fabricated masks or generic placeholder assets.
-Keep the plan concise and executable; it is evidence for the builder and independent critic, not a claim of completed reconstruction.
+geometry_strategy=fuse initializes shared DA3/per-object TSDF observations; model starts from original-image evidence; group creates no mesh. List every important visible editable object. Preserve ambiguous visible regions in unexplained_regions as modeling tasks. These uncertainties do not prevent the modeler from beginning detailed work. Occluded unseen objects must not be invented as observations.
+This is one-time scene initialization. The modeler owns all subsequent refinement, including omissions, wrong instance associations, split/merge corrections and geometry gaps. The independent critic sends every issue directly to that modeler. The plan is a hypothesis and may be corrected with image evidence in the modeler's report. Do not silently drop an observed object because SAM may miss it, fabricate masks, or assume generic placeholder assets are sufficient.
+Keep this initial plan concise and executable; it is evidence for detailed modeling, not a claim of completed reconstruction.
 """
     (directory / "prompt.txt").write_text(prompt, encoding="utf-8")
     role = runtime["planner"]
@@ -97,7 +96,7 @@ Keep the plan concise and executable; it is evidence for the builder and indepen
     with codex_home(role.get("home")), (directory / "events.jsonl").open("w") as events, (directory / "stderr.log").open("w") as errors:
         subprocess.run(command, input=prompt, text=True, stdout=events, stderr=errors,
                        check=True, timeout=runtime.get("planner_timeout", 1800))
-    plan = validate_plan(project, read_json(output), read_json(project_file(project, previous)) if previous else None)
+    plan = validate_plan(project, read_json(output))
     # Detect source replacement while the independent planner was reading it.
     observations(project)
     if source_hash != file_hash(project_file(project, "observations/manifest.json")):
@@ -125,15 +124,19 @@ def run_tool(name, runtime, project, run_dir, plan_path, output, segments_path=N
 
 
 def modeling_prompt(project, status, candidate, receipt, previous_review=None):
+    diagnostic = status.get("builder_diagnostic_path")
+    report_diagnostic = (f"{project / diagnostic}\n{read_json(project_file(project, diagnostic))['message']}"
+                         if diagnostic else "无")
     return f"""执行本轮3D-world harness真实场景建模任务。物理暂缓。先看原图、物体清单、分割和逐物体几何证据，再在Blender建模。
 计划：{project / status['plan_path']}
 分割记录：{project / status['segments_path']}
 观测几何：{project / status['geometry_path']}
 上轮审核：{previous_review or '无'}
-必须完成计划中每个非group物体，严格保留稳定ID；保留有几何的父子关系。group只是任务分组，可省略没有几何的group节点并连接最近实体祖先。几何/掩码只是证据，不能把TSDF碎片或裁剪照片当成完成的可编辑模型。strategy=model的物体即使SAM漏检也必须根据原始多视角单独建模；未观测面明确标为estimated。用原始图补足边界、背面、底面和遮挡，限制纹理来源，不能把枕头/灯具烘焙到邻物体。没有证据的细节不得声称实测。
+建模报告格式返工诊断（不是独立审核）：{report_diagnostic}
+前面的计划、SAM、DA3/TSDF都是初始化。你负责逐个物体精细建模，并负责所有审核返工，包括漏物体、错误拆分/实例对应、分割边界和几何缺口，不等待计划Agent或前处理替你解决。默认保留稳定ID；如原清单认错、需拆分/合并或调整层级，可依据原图纠正，在modeling_report.json中明确映射，不可静默删除。group只是任务分组，可省略无几何的group节点。不能把TSDF碎片或裁剪照片当作已完成模型；SAM漏检或几何超限的物体仍须按原图建模，必要时自己调用工具修正局部证据。未观测面标为estimated。限制纹理来源，不能把枕头/灯具烘焙到邻物体。
 按priority建模并检查移动/旋转：移动物体后旧位置不能残留重复几何或纹理，墙地面不能被一起带走。材质、原点、层级与轮廓都需要检查。独立审核将逐项检查所有原图、计划覆盖和旧问题。
 当前世界版本为{status['base_world_revision']}。输出完整候选 {candidate}，revision={status['base_world_revision']+1}；所有新脚本、资产放候选同目录。用build_world(scene=candidate,render=True)构建，将完整receipt写到{receipt}。保持原坐标、全部已有验证相机和原始来源。不要修改world/scene.json、已发布文件、计划/分割/几何证据、审核记录或仓库代码，不要发布。候选由独立审核通过后统一发布。
-如发现计划遗漏/身份错误，记录到候选目录modeling_report.json，不能靠删对象或伪造证据过关；审核后由计划Agent修正。
+另外输出候选同目录的modeling_report.json，严格遵循该目录modeling_report_schema.json。报告绑定初始plan文件SHA-256，objects逐项记录每个初始非group物体对应的scene_ids；regions逐项处理初始unexplained_regions的索引。resolution为modeled/excluded/unresolved，每条给reason和原始frame_indices依据。拆合可显式映射一对多/多对一；排除必须有证据，不能凭分割失败否认物体。报告只说明如何处理初始化，不代表你可以自行验收；所有问题由独立审核复验。原初始化与旧审核证据保持不变。
 """
 
 
@@ -143,6 +146,40 @@ def load_evidence(project, status):
     geometry = validate_geometry(project, status["plan_path"], status["segments_path"],
                                  read_json(project_file(project, status["geometry_path"])))
     return plan, segments, geometry, unresolved_objects(plan, segments, geometry)
+
+
+def initialize(project, run_dir, round_dir, runtime, status, update, stop_after):
+    """Run each missing initialization stage once; leave gaps to the modeler."""
+    if not status.get("plan_path"):
+        update("planning", completed_stages=[])
+        plan_path, plan = run_planner(project, round_dir / "plan", runtime)
+        update("planning", plan_path=plan_path, summary=plan["summary"], completed_stages=["planning"])
+    else:
+        validate_plan(project, read_json(project_file(project, status["plan_path"])))
+    if stop_after == "plan":
+        update("planned", reason="初始化计划已保存；尚未精细建模。")
+        return False
+    if not status.get("segments_path"):
+        update("segmenting")
+        path = run_tool("segmentation", runtime, project, run_dir, status["plan_path"],
+                        str((round_dir / "segments").relative_to(project)))
+        validate_segments(project, status["plan_path"], read_json(project_file(project, path)))
+        update("segmenting", segments_path=path, completed_stages=["planning", "segmenting"])
+    else:
+        validate_segments(project, status["plan_path"], read_json(project_file(project, status["segments_path"])))
+    if stop_after == "segment":
+        update("segmented", reason="初始化分割已保存；尚未精细建模。")
+        return False
+    if not status.get("geometry_path"):
+        update("geometry")
+        path = run_tool("geometry", runtime, project, run_dir, status["plan_path"],
+                        str((round_dir / "geometry").relative_to(project)), status["segments_path"])
+        validate_geometry(project, status["plan_path"], status["segments_path"], read_json(project_file(project, path)))
+        update("geometry", geometry_path=path, completed_stages=["planning", "segmenting", "geometry"])
+    _, _, _, todos = load_evidence(project, status)
+    update("ready_for_modeling", modeling_todo_count=len(todos), completed_stages=["planning", "segmenting", "geometry"],
+           reason=f"初始证据可用；{len(todos)}项证据缺口交给建模 Agent 精细处理，尚未通过质量审核。")
+    return stop_after != "geometry"
 
 
 def run(options):
@@ -158,7 +195,8 @@ def run(options):
             if status.get("accepted"):
                 raise ValueError("this run has already been accepted; start a new run for new work")
             run_dir = project / "object_pipeline" / options.resume
-            resume_pending = bool((status.get("feedback_id") and status.get("reviewed_feedback_id") != status["feedback_id"])
+            checked_feedback = status.get("checked_feedback_id", status.get("reviewed_feedback_id"))
+            resume_pending = bool((status.get("feedback_id") and checked_feedback != status["feedback_id"])
                                   or (status.get("builder_request") and not status.get("feedback_id")))
             start_round = status["round"] if resume_pending else status["round"] + 1
         else:
@@ -190,73 +228,9 @@ def run(options):
                 round_dir = run_dir / f"round_{number:02d}"
                 round_dir.mkdir(exist_ok=resume_pending)
                 status["round"] = number
-                feedback = read_json(project_file(project, previous_review)) if previous_review else None
-                # A failed geometry worker must not repeat the completed paid
-                # planner/SAM stages. Retry only geometry in a fresh directory.
-                if (options.resume and number == start_round and not resume_pending
-                        and status.get("segments_path") and not status.get("geometry_path")
-                        and options.stop_after in {"geometry", "review"}):
-                    plan_path = status["plan_path"]
-                    plan = validate_plan(project, read_json(project_file(project, plan_path)))
-                    segments = validate_segments(project, plan_path, read_json(project_file(project, status["segments_path"])))
-                    update("geometry")
-                    geometry_path = run_tool("geometry", runtime, project, run_dir, plan_path,
-                                             str((round_dir / "geometry_resume").relative_to(project)), status["segments_path"])
-                    geometry = validate_geometry(project, plan_path, status["segments_path"], read_json(project_file(project, geometry_path)))
-                    tasks = unresolved_objects(plan, segments, geometry)
-                    update("geometry", geometry_path=geometry_path, completed_stages=["planning", "segmenting", "geometry"])
-                    if options.stop_after == "geometry":
-                        blocked = any(task["blocking"] for task in tasks)
-                        update("needs_revision" if blocked else "ready_for_modeling", reason=
-                               "物体几何已续跑；仍有明确的证据/表示问题待计划修订。" if blocked
-                               else "物体证据已准备；尚未建模或通过质量审核。")
-                        return status
-                needs_plan = not status.get("geometry_path") or any(
-                    issue.get("target") in {"planning", "segmentation"} for issue in (feedback or {}).get("issues", []))
-                if status.get("geometry_path"):
-                    _, _, _, tasks = load_evidence(project, status)
-                    needs_plan = needs_plan or any(task["blocking"] for task in tasks)
                 if resume_pending:
-                    if not status.get("geometry_path") or any(task["blocking"] for task in tasks):
-                        raise ValueError("submitted builder task has unresolved or missing evidence; inspect its saved feedback")
-                    needs_plan = False
-                if needs_plan:
-                    previous_plan = status.get("plan_path")
-                    for attempt in range(2):
-                        update("planning", completed_stages=[], segments_path=None, geometry_path=None)
-                        plan_path, plan = run_planner(project, round_dir / f"plan_{attempt + 1}", runtime,
-                                                      previous_plan, feedback)
-                        update("planning", plan_path=plan_path, summary=plan["summary"], completed_stages=["planning"])
-                        if options.stop_after == "plan":
-                            update("planned", reason="计划已保存；分割尚未运行。")
-                            return status
-                        update("segmenting")
-                        segments_path = run_tool("segmentation", runtime, project, run_dir, plan_path,
-                                                 str((round_dir / f"segments_{attempt + 1}").relative_to(project)))
-                        segments = validate_segments(project, plan_path, read_json(project_file(project, segments_path)))
-                        update("segmenting", segments_path=segments_path, completed_stages=["planning", "segmenting"])
-                        if options.stop_after == "segment":
-                            update("segmented", reason="分割记录已保存；物体几何尚未运行。")
-                            return status
-                        update("geometry")
-                        geometry_path = run_tool("geometry", runtime, project, run_dir, plan_path,
-                                                 str((round_dir / f"geometry_{attempt + 1}").relative_to(project)), segments_path)
-                        geometry = validate_geometry(project, plan_path, segments_path, read_json(project_file(project, geometry_path)))
-                        tasks = unresolved_objects(plan, segments, geometry)
-                        update("geometry", geometry_path=geometry_path, completed_stages=["planning", "segmenting", "geometry"])
-                        if not any(task["blocking"] for task in tasks):
-                            break
-                        previous_plan = plan_path
-                        feedback = {"unresolved": tasks, "segments_path": segments_path, "geometry_path": geometry_path,
-                                    "previous_review": previous_review}
-                    if any(task["blocking"] for task in tasks):
-                        update("needs_revision", reason="两次计划/分割后仍有证据缺口；保留物体清单，未启动建模。")
-                        return status
-                _, _, _, tasks = load_evidence(project, status)
-                if any(task["blocking"] for task in tasks):
-                    raise ValueError("unresolved object evidence cannot enter modeling")
-                update("ready_for_modeling", reason="物体证据已准备；尚未建模或通过质量审核。")
-                if options.stop_after == "geometry":
+                    load_evidence(project, status)
+                elif not initialize(project, run_dir, round_dir, runtime, status, update, options.stop_after):
                     return status
                 if not options.url:
                     raise ValueError("--url is required for modeling and review")
@@ -280,6 +254,7 @@ def run(options):
                     model_dir.mkdir()
                     candidate = str((model_dir / "candidate.json").relative_to(project))
                     receipt = str((model_dir / "build_receipt.json").relative_to(project))
+                    write_json(model_dir / "modeling_report_schema.json", MODEL_REPORT_SCHEMA)
                     prompt = modeling_prompt(project, status, candidate, receipt, previous_review)
                     (model_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
                     key = status["run_id"] + f"-model-{number}"
@@ -288,18 +263,36 @@ def run(options):
                     feedback_id = workbench.repair(prompt, key)
                 update("modeling", feedback_id=feedback_id)
                 workbench.wait_builder(feedback_id)
-                update("reviewing", completed_stages=["planning", "segmenting", "geometry", "modeling"])
+                # Evidence and candidate failures stay fatal; only builder-report
+                # format errors return to this builder without inventing a review.
+                observations(project)
+                load_evidence(project, status)
+                scene = read_json(project_file(project, candidate))
+                report_path = str((model_dir / "modeling_report.json").relative_to(project))
+                try:
+                    report = read_modeling_report(project, report_path)
+                    validate_modeling_report(project, status["plan_path"], scene, report)
+                except ModelingReportError as exc:
+                    diagnostic = model_dir / "builder_diagnostic.json"
+                    write_json(diagnostic, {"kind": "modeling_report", "feedback_id": feedback_id,
+                        "candidate_path": candidate, "modeling_report_path": report_path, "message": str(exc)})
+                    update("needs_revision", builder_diagnostic_path=str(diagnostic.relative_to(project)),
+                           checked_feedback_id=feedback_id, reason="建模处理报告格式不完整，已保存返工诊断。")
+                    resume_pending = False
+                    continue
+                update("reviewing", builder_diagnostic_path=None,
+                       completed_stages=["planning", "segmenting", "geometry", "modeling"])
                 role = runtime["reviewer"]
                 review_options = SimpleNamespace(project=project, url=options.url, candidate=candidate, receipt=receipt,
                     feedback_id=None, codex=role["codex"], blender=runtime.get("blender", "blender"),
                     review_model=role["model"], requested_review_model="gpt-6.1-sol", max_rounds=1,
                     plan=status["plan_path"], segments=status["segments_path"], geometry=status["geometry_path"],
-                    previous_review=previous_review)
+                    modeling_report=report_path, previous_review=previous_review)
                 with codex_home(role.get("home")):
                     reviewed = review_candidate(review_options)
                 previous_review = str(Path(reviewed["review_directory"]) / "review.json")
                 update("reviewing", previous_review=previous_review, review_run_id=reviewed["run_id"],
-                       reviewed_feedback_id=feedback_id)
+                       reviewed_feedback_id=feedback_id, checked_feedback_id=feedback_id)
                 resume_pending = False
                 if reviewed["accepted"]:
                     update("accepted", accepted=True, summary=reviewed["summary"],
@@ -308,7 +301,9 @@ def run(options):
                 feedback = read_json(project_file(project, previous_review))
                 if feedback["verdict"] == "blocked":
                     break
-            update("needs_revision", reason="本轮审核未通过；问题与物体证据已保存，可显式续跑。")
+            reason = ("建模处理报告需要修正；返工诊断已保存，可显式续跑。" if status.get("builder_diagnostic_path")
+                      else "本轮审核未通过；问题与物体证据已保存，可显式续跑。")
+            update("needs_revision", reason=reason)
             return status
         except (Exception, KeyboardInterrupt) as exc:
             message = (f"当前阶段执行失败（退出码 {exc.returncode}）；详见本轮运行日志。"

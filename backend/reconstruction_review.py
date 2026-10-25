@@ -43,10 +43,26 @@ REVIEW_SCHEMA = record({
 })
 
 
-PLANNED_REVIEW_SCHEMA = deepcopy(REVIEW_SCHEMA)
-_planned_issue = PLANNED_REVIEW_SCHEMA["properties"]["issues"]["items"]
+HISTORICAL_PLANNED_REVIEW_SCHEMA = deepcopy(REVIEW_SCHEMA)
+_planned_issue = HISTORICAL_PLANNED_REVIEW_SCHEMA["properties"]["issues"]["items"]
 _planned_issue["properties"]["target"] = {"enum": ["planning", "segmentation", "modeling"]}
 _planned_issue["required"].append("target")
+
+PLANNED_REVIEW_SCHEMA = deepcopy(REVIEW_SCHEMA)
+_planned_issue = PLANNED_REVIEW_SCHEMA["properties"]["issues"]["items"]
+_planned_issue["properties"]["category"] = {"enum": ["inventory", "segmentation", "geometry", "appearance", "editability"]}
+_planned_issue["required"].append("category")
+
+
+def review_schema(manifest):
+    if not manifest.get("plan_path"):
+        return REVIEW_SCHEMA
+    version = manifest.get("workflow_version", 1)
+    if version == 1:
+        return HISTORICAL_PLANNED_REVIEW_SCHEMA
+    if version == 2:
+        return PLANNED_REVIEW_SCHEMA
+    raise ValueError("unsupported reconstruction review workflow version")
 
 
 def read_json(path):
@@ -114,11 +130,12 @@ def make_object_inspection_sheets(project, output, edit_check):
     return sheets
 
 
-def freeze_plan_evidence(project, scene, output, files, plan_path, segments_path, geometry_path):
+def freeze_plan_evidence(project, scene, output, files, plan_path, segments_path, geometry_path, *, modeling_report_path):
     """Bind the independent inventory, all original training views and object evidence."""
-    from reconstruction_plan import candidate_coverage, observations, validate_geometry
+    from reconstruction_plan import observations, validate_geometry, validate_modeling_report
     inputs = {"plan": project_file(project, plan_path), "segments": project_file(project, segments_path),
-              "geometry": project_file(project, geometry_path)}
+              "geometry": project_file(project, geometry_path),
+              "modeling_report": project_file(project, modeling_report_path)}
     plan, segments = read_json(inputs["plan"]), read_json(inputs["segments"])
     geometry = validate_geometry(project, str(inputs["plan"].relative_to(project)),
                                  str(inputs["segments"].relative_to(project)), read_json(inputs["geometry"]))
@@ -146,7 +163,8 @@ def freeze_plan_evidence(project, scene, output, files, plan_path, segments_path
         shutil.copyfile(path, frozen)
         paths[name + "_path"] = str(frozen.relative_to(project))
         files[paths[name + "_path"]] = file_hash(frozen)
-    inventory = candidate_coverage(plan, scene)
+    inventory = validate_modeling_report(project, str(inputs["plan"].relative_to(project)), scene,
+                                        read_json(inputs["modeling_report"]))
     inventory_path = output / "inventory.json"
     write_json(inventory_path, inventory)
     paths["inventory_path"] = str(inventory_path.relative_to(project))
@@ -171,14 +189,14 @@ def freeze_plan_evidence(project, scene, output, files, plan_path, segments_path
         files[relative] = file_hash(path)
         source_sheets.append(relative)
     verify_files(project, files)
-    return {**paths, "planned_object_ids": [obj["id"] for obj in plan["objects"]],
-            "required_object_ids": [obj["id"] for obj in plan["objects"] if obj["kind"] != "group"],
+    return {**paths, "workflow_version": 2, "planned_object_ids": [obj["id"] for obj in plan["objects"]],
+            "required_object_ids": [obj["id"] for obj in scene["objects"]],
             "source_observations": source_views, "source_view_ids": [view["view_id"] for view in source_views],
             "source_inspection_paths": source_sheets}, inventory["passed"]
 
 
 def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="blender", previous_review=None,
-                     plan_path=None, segments_path=None, geometry_path=None):
+                     plan_path=None, segments_path=None, geometry_path=None, modeling_report_path=None):
     """Verify builder output, then independently exercise the reopened Blender file."""
     project, output = Path(project).resolve(), Path(output).resolve()
     if not output.is_relative_to(project):
@@ -210,13 +228,12 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
     verify_files(project, files)
     planned, inventory_passed = {}, None
     if plan_path:
-        planned, inventory_passed = freeze_plan_evidence(project, scene, output, files, *planned_inputs)
+        modeling_report_path = modeling_report_path or str(Path(candidate_path).parent / "modeling_report.json")
+        planned, inventory_passed = freeze_plan_evidence(project, scene, output, files, *planned_inputs,
+                                                        modeling_report_path=modeling_report_path)
     write_json(output / "scene.json", scene)
     write_json(output / "build.json", receipt)
-    inspection_ids = []
-    if planned:
-        groups = set(planned["planned_object_ids"]) - set(planned["required_object_ids"])
-        inspection_ids = sorted((set(planned["required_object_ids"]) | {obj["id"] for obj in scene["objects"]}) - groups)
+    inspection_ids = sorted(obj["id"] for obj in scene["objects"]) if planned else []
     job = {"blend_path": receipt["blend_path"], "scene": scene, "output_dir": str(output),
            "inspection_object_ids": inspection_ids}
     write_json(output / "edit_job.json", job)
@@ -267,7 +284,7 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
 
 def validate_review(manifest, review, previous=None):
     """Reject unbound, incomplete, or self-contradictory approvals."""
-    Draft202012Validator(PLANNED_REVIEW_SCHEMA if manifest.get("plan_path") else REVIEW_SCHEMA).validate(review)
+    Draft202012Validator(review_schema(manifest)).validate(review)
     for field in ("reviewed_views", "checked_objects", "resolved_issue_ids"):
         if len(review[field]) != len(set(review[field])):
             raise ValueError(f"{field} must not repeat IDs")

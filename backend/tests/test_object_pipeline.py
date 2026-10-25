@@ -29,9 +29,12 @@ class ObjectPipelineTests(unittest.TestCase):
         self.plan_calls, self.tool_calls, self.build_calls, self.review_calls = [], [], [], []
         self.strategies = ["fuse"]
         self.missing = False
+        self.geometry_status = None
+        self.unexplained = []
         self.interrupt_builder = False
         self.lose_builder_response = False
         self.hide_queued_feedback = False
+        self.report_modes = []
         self.reviews = [{"verdict": "accepted", "issues": [], "resolved_issue_ids": []}]
         frames = []
         for index in (1, 7):
@@ -65,6 +68,7 @@ class ObjectPipelineTests(unittest.TestCase):
                 if outer.interrupt_builder:
                     outer.interrupt_builder = False
                     raise KeyboardInterrupt("controller interrupted while modeler continues")
+                outer.complete_builder()
 
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
@@ -93,7 +97,7 @@ class ObjectPipelineTests(unittest.TestCase):
     def plan_worker(self, project, directory, runtime, previous=None, feedback=None):
         self.plan_calls.append({"previous": previous, "feedback": copy.deepcopy(feedback)})
         strategy = self.strategies[min(len(self.plan_calls) - 1, len(self.strategies) - 1)]
-        plan = {"schema_version": 1, "summary": "mock planner inventory", "excluded_objects": [], "unexplained_regions": [],
+        plan = {"schema_version": 1, "summary": "mock planner inventory", "excluded_objects": [], "unexplained_regions": copy.deepcopy(self.unexplained),
             "source_manifest_sha256": MODULE.file_hash(project / "observations/manifest.json"),
             "objects": [{"id": "chair", "name": "chair", "category": "chair", "parent_id": None, "kind": "object",
                          "priority": 1, "geometry_strategy": strategy, "segmentation_prompt": "chair",
@@ -119,6 +123,8 @@ class ObjectPipelineTests(unittest.TestCase):
         else:
             row = {"id": "chair", "status": "not_required" if strategy == "model" else "insufficient_evidence" if self.missing else "ready",
                    "reason": "mock geometry result", "files": {}}
+            if self.geometry_status:
+                row.update(status=self.geometry_status, reason="UV refinement exceeded its explicit face limit")
             if row["status"] == "ready":
                 mesh_path = project / output / "chair.obj"
                 texture_path = project / output / "chair.png"
@@ -133,6 +139,7 @@ class ObjectPipelineTests(unittest.TestCase):
         return self.write(str(Path(output) / filename), report)
 
     def review_worker(self, options):
+        self.assertFalse(MODULE.read_json(self.project / "object_pipeline/status.json")["accepted"])
         self.review_calls.append(options)
         index = len(self.review_calls) - 1
         review = copy.deepcopy(self.reviews[min(index, len(self.reviews) - 1)])
@@ -141,20 +148,130 @@ class ObjectPipelineTests(unittest.TestCase):
         return {"accepted": review["verdict"] == "accepted", "summary": "mock review", "run_id": f"mock-review-{index + 1}",
                 "review_directory": relative}
 
-    def test_miss_replans_then_explicit_reference_modeling_reaches_review(self):
-        self.strategies = ["fuse", "model"]
+    def complete_builder(self):
+        status = MODULE.read_json(self.project / "object_pipeline/status.json")
+        candidate = Path(status["candidate_path"])
+        self.write(candidate, {"objects": [{"id": "chair", "parent_id": None}]})
+        report_path = candidate.parent / "modeling_report.json"
+        mode = self.report_modes.pop(0) if self.report_modes else "valid"
+        if mode == "missing":
+            return
+        if mode == "json":
+            (self.project / report_path).write_text("{unfinished")
+            return
+        disposition = {"scene_ids": ["chair"], "resolution": "modeled",
+                       "reason": "Built from the original training image", "frame_indices": [1]}
+        report = {"schema_version": 1, "summary": "mock builder report",
+                  "plan_sha256": MODULE.file_hash(self.project / status["plan_path"]),
+                  "objects": [{"plan_id": "chair", **disposition}],
+                  "regions": [{"region_index": index, **disposition} for index in range(len(self.unexplained))]}
+        if mode == "schema":
+            del report["summary"]
+        elif mode == "mapping":
+            report["objects"][0]["scene_ids"] = ["absent"]
+        elif mode == "incomplete":
+            report["objects"] = []
+        elif mode == "unresolved":
+            report["objects"][0]["resolution"] = "unresolved"
+        self.write(report_path, report)
+
+    def test_report_format_errors_return_to_builder_without_reinitializing_or_faking_review(self):
+        for mode in ("missing", "json", "schema", "mapping"):
+            with self.subTest(mode=mode):
+                self.plan_calls.clear()
+                self.tool_calls.clear()
+                self.build_calls.clear()
+                self.review_calls.clear()
+                self.report_modes = [mode, "valid"]
+                status = self.execute(max_rounds=2)
+                self.assertTrue(status["accepted"])
+                self.assertEqual(len(self.plan_calls), 1)
+                self.assertEqual(self.tool_calls, ["segmentation", "geometry"])
+                self.assertEqual(len(self.build_calls), 2)
+                self.assertEqual(len(self.review_calls), 1)
+                self.assertIsNone(self.review_calls[0].previous_review)
+                self.assertIn("builder_diagnostic.json", self.build_calls[1]["prompt"])
+                diagnostic = self.project / "object_pipeline" / status["run_id"] / "round_01/model/builder_diagnostic.json"
+                data = MODULE.read_json(diagnostic)
+                self.assertEqual(data["kind"], "modeling_report")
+                self.assertNotIn("verdict", data)
+                self.assertLess(len(data["message"]), 500)
+
+    def test_report_diagnostic_resume_starts_next_model_round_and_preserves_real_review(self):
+        self.report_modes = ["valid", "missing", "valid"]
+        self.reviews = [{"verdict": "revise", "issues": [{"id": "R001", "category": "geometry"}], "resolved_issue_ids": []},
+                        {"verdict": "accepted", "issues": [], "resolved_issue_ids": ["R001"]}]
+        first = self.execute(max_rounds=2)
+        self.assertEqual(first["stage"], "needs_revision")
+        self.assertEqual(first["checked_feedback_id"], "feedback-2")
+        self.assertEqual(first["reviewed_feedback_id"], "feedback-1")
+        second = self.execute(resume=first["run_id"])
+        self.assertTrue(second["accepted"])
+        self.assertEqual(second["round"], first["round"] + 1)
+        self.assertEqual(len(self.build_calls), 3)
+        self.assertEqual(len(self.plan_calls), 1)
+        self.assertEqual(self.tool_calls, ["segmentation", "geometry"])
+        self.assertEqual(self.review_calls[1].previous_review, first["previous_review"])
+        self.assertIn(first["previous_review"], self.build_calls[2]["prompt"])
+        self.assertIn(first["builder_diagnostic_path"], self.build_calls[2]["prompt"])
+
+    def test_incomplete_or_unresolved_report_still_goes_to_independent_review(self):
+        self.reviews = [{"verdict": "revise", "issues": [{"id": "R001", "category": "inventory"}], "resolved_issue_ids": []}]
+        for mode in ("incomplete", "unresolved"):
+            with self.subTest(mode=mode):
+                self.report_modes = [mode]
+                before = len(self.review_calls)
+                status = self.execute()
+                self.assertEqual(len(self.review_calls), before + 1)
+                self.assertFalse(status["accepted"])
+                self.assertIsNone(status.get("builder_diagnostic_path"))
+
+    def test_changed_initial_evidence_stays_fatal_even_when_report_is_missing(self):
+        complete = self.complete_builder
+        source = self.project / "observations/train/000001.png"
+        original_source = source.read_bytes()
+        for kind in ("source", "plan", "segments", "geometry"):
+            with self.subTest(kind=kind):
+                self.report_modes = ["missing"]
+
+                def corrupt_after_build():
+                    complete()
+                    status = MODULE.read_json(self.project / "object_pipeline/status.json")
+                    if kind == "source":
+                        source.write_bytes(b"changed source")
+                    elif kind == "geometry":
+                        geometry = MODULE.read_json(self.project / status["geometry_path"])
+                        (self.project / geometry["objects"][0]["mesh_path"]).write_text("changed mesh")
+                    else:
+                        path = self.project / status[f"{kind}_path"]
+                        path.write_text(path.read_text() + "\n")
+
+                with patch.object(self, "complete_builder", side_effect=corrupt_after_build):
+                    with self.assertRaises(ValueError):
+                        self.execute(max_rounds=2)
+                status = MODULE.read_json(self.project / "object_pipeline/status.json")
+                self.assertEqual(status["stage"], "failed")
+                self.assertNotIn("builder_diagnostic_path", status)
+                self.assertFalse(self.review_calls)
+                source.write_bytes(original_source)
+
+    def test_missing_masks_and_geometry_become_builder_tasks_without_reinitialization(self):
         self.missing = True
+        self.reviews = [{"verdict": "revise", "issues": [{"id": "R001", "category": "geometry"}], "resolved_issue_ids": []}]
         status = self.execute()
-        self.assertTrue(status["accepted"])
-        self.assertEqual(len(self.plan_calls), 2)
-        self.assertIn("unresolved", self.plan_calls[1]["feedback"])
-        self.assertEqual(self.tool_calls, ["segmentation", "geometry"] * 2)
+        self.assertFalse(status["accepted"])
+        self.assertEqual(status["stage"], "needs_revision")
+        self.assertEqual(len(self.plan_calls), 1)
+        self.assertEqual(self.tool_calls, ["segmentation", "geometry"])
         self.assertEqual(len(self.build_calls), 1)
-        self.assertIn("SAM漏检", self.build_calls[0]["prompt"])
         self.assertEqual(len(self.review_calls), 1)
         plan = MODULE.read_json(self.project / status["plan_path"])
         self.assertEqual(plan["objects"][0]["id"], "chair")
-        self.assertEqual(plan["objects"][0]["geometry_strategy"], "model")
+        self.assertEqual(plan["objects"][0]["geometry_strategy"], "fuse")
+        _, _, _, tasks = MODULE.load_evidence(self.project, status)
+        self.assertTrue(tasks)
+        self.assertTrue(all(row["object_id"] == "chair" for row in tasks))
+        self.assertFalse(any(row["blocking"] for row in tasks))
 
     def test_geometry_ready_is_not_quality_accepted(self):
         status = self.execute(stop_after="geometry")
@@ -180,12 +297,12 @@ class ObjectPipelineTests(unittest.TestCase):
                         self.execute(stop_after="geometry")
                 first = MODULE.read_json(self.project / "object_pipeline/status.json")
                 self.assertEqual(first["stage"], "failed")
-                self.assertIsNone(first["geometry_path"])
+                self.assertIsNone(first.get("geometry_path"))
                 original_plan_hash = MODULE.file_hash(self.project / first["plan_path"])
                 original_segments_hash = MODULE.file_hash(self.project / first["segments_path"])
                 plan_count = len(self.plan_calls)
                 second = self.execute(resume=first["run_id"], stop_after="geometry")
-                self.assertEqual(second["stage"], "needs_revision" if missing else "ready_for_modeling")
+                self.assertEqual(second["stage"], "ready_for_modeling")
                 self.assertFalse(second["accepted"])
                 self.assertEqual(len(self.plan_calls), plan_count)
                 self.assertEqual(self.tool_calls[previous_tools:], ["segmentation", "geometry", "geometry"])
@@ -193,25 +310,50 @@ class ObjectPipelineTests(unittest.TestCase):
                 self.assertEqual(second["segments_path"], first["segments_path"])
                 self.assertEqual(MODULE.file_hash(self.project / second["plan_path"]), original_plan_hash)
                 self.assertEqual(MODULE.file_hash(self.project / second["segments_path"]), original_segments_hash)
-                self.assertIn("round_02/geometry_resume/", second["geometry_path"])
+                self.assertGreater(second["round"], first["round"])
+                self.assertIn(f"round_{second['round']:02d}", Path(second["geometry_path"]).parts)
+                self.assertNotIn(f"round_{first['round']:02d}", Path(second["geometry_path"]).parts)
                 self.assertFalse(self.build_calls)
                 self.assertFalse(self.review_calls)
 
-    def test_review_routes_planning_and_segmentation_issues_upstream(self):
-        for target in ("planning", "segmentation"):
-            with self.subTest(target=target):
+    def test_resume_after_planning_completes_only_missing_initialization_stages(self):
+        first = self.execute(stop_after="plan")
+        self.assertEqual(first["stage"], "planned")
+        self.assertEqual(len(self.plan_calls), 1)
+        self.assertFalse(self.tool_calls)
+        plan_hash = MODULE.file_hash(self.project / first["plan_path"])
+        second = self.execute(resume=first["run_id"], stop_after="geometry")
+        self.assertEqual(second["stage"], "ready_for_modeling")
+        self.assertFalse(second["accepted"])
+        self.assertEqual(len(self.plan_calls), 1)
+        self.assertEqual(self.tool_calls, ["segmentation", "geometry"])
+        self.assertEqual(second["plan_path"], first["plan_path"])
+        self.assertEqual(MODULE.file_hash(self.project / second["plan_path"]), plan_hash)
+        self.assertFalse(self.build_calls)
+        self.assertFalse(self.review_calls)
+
+    def test_every_review_category_returns_to_builder_without_reinitialization(self):
+        for category in ("inventory", "segmentation", "geometry", "appearance", "editability"):
+            with self.subTest(category=category):
                 self.plan_calls.clear()
+                self.tool_calls.clear()
+                self.build_calls.clear()
                 self.review_calls.clear()
-                self.reviews = [{"verdict": "revise", "issues": [{"id": "R001", "target": target}], "resolved_issue_ids": []},
+                self.reviews = [{"verdict": "revise", "issues": [{"id": "R001", "category": category}], "resolved_issue_ids": []},
                                 {"verdict": "accepted", "issues": [], "resolved_issue_ids": ["R001"]}]
                 status = self.execute(max_rounds=2)
                 self.assertTrue(status["accepted"])
-                self.assertEqual(len(self.plan_calls), 2)
-                self.assertEqual(self.plan_calls[1]["feedback"]["issues"][0]["id"], "R001")
+                self.assertEqual(len(self.plan_calls), 1)
+                self.assertEqual(self.tool_calls, ["segmentation", "geometry"])
+                self.assertEqual(len(self.build_calls), 2)
+                self.assertEqual(self.review_calls[0].plan, self.review_calls[1].plan)
+                self.assertEqual(self.review_calls[0].segments, self.review_calls[1].segments)
+                self.assertEqual(self.review_calls[0].geometry, self.review_calls[1].geometry)
                 self.assertEqual(self.review_calls[1].previous_review, "reconstruction/mock-review-1/round_01/review.json")
+                self.assertIn(self.review_calls[1].previous_review, self.build_calls[1]["prompt"])
 
-    def test_resume_carries_previous_review_and_does_not_replan_modeling_only_issue(self):
-        self.reviews = [{"verdict": "revise", "issues": [{"id": "R017", "target": "modeling"}], "resolved_issue_ids": []},
+    def test_resume_carries_previous_review_without_replanning(self):
+        self.reviews = [{"verdict": "revise", "issues": [{"id": "R017", "category": "appearance"}], "resolved_issue_ids": []},
                         {"verdict": "accepted", "issues": [], "resolved_issue_ids": ["R017"]}]
         first = self.execute()
         self.assertEqual(first["stage"], "needs_revision")
@@ -221,16 +363,51 @@ class ObjectPipelineTests(unittest.TestCase):
         self.assertEqual(self.review_calls[1].previous_review, first["previous_review"])
         self.assertIn(first["previous_review"], self.build_calls[1]["prompt"])
 
-    def test_resume_cannot_skip_unresolved_missing_objects(self):
+    def test_resume_preserves_missing_object_tasks_and_continues_builder(self):
         self.missing = True
+        self.reviews = [{"verdict": "revise", "issues": [{"id": "R017", "category": "segmentation"}], "resolved_issue_ids": []},
+                        {"verdict": "accepted", "issues": [], "resolved_issue_ids": ["R017"]}]
         first = self.execute()
         self.assertEqual(first["stage"], "needs_revision")
-        self.assertFalse(self.build_calls)
-        second = self.execute(resume=first["run_id"], stop_after="geometry")
-        self.assertEqual(second["stage"], "needs_revision")
-        self.assertFalse(second["accepted"])
-        self.assertFalse(self.build_calls)
-        self.assertEqual(len(self.plan_calls), 4)
+        self.assertEqual(len(self.build_calls), 1)
+        second = self.execute(resume=first["run_id"])
+        self.assertTrue(second["accepted"])
+        self.assertEqual(len(self.build_calls), 2)
+        self.assertEqual(len(self.plan_calls), 1)
+        self.assertEqual(self.tool_calls, ["segmentation", "geometry"])
+        self.assertEqual(second["segments_path"], first["segments_path"])
+
+    def test_unexplained_regions_are_modeling_tasks_not_a_planner_loop(self):
+        self.unexplained = [{"frame_index": 1, "box": [.1, .1, .2, .2], "description": "small object not yet identified"}]
+        self.reviews = [{"verdict": "revise", "issues": [{"id": "R004", "category": "inventory"}], "resolved_issue_ids": []}]
+        status = self.execute()
+        self.assertFalse(status["accepted"])
+        self.assertEqual(len(self.plan_calls), 1)
+        self.assertEqual(len(self.build_calls), 1)
+        _, _, _, tasks = MODULE.load_evidence(self.project, status)
+        self.assertTrue(any(row["object_id"] == "scene" for row in tasks))
+        self.assertFalse(any(row["blocking"] for row in tasks))
+
+    def test_typed_geometry_limit_is_a_builder_task_but_unknown_failure_stops(self):
+        self.geometry_status = "needs_revision"
+        self.reviews = [{"verdict": "revise", "issues": [{"id": "R005", "category": "geometry"}], "resolved_issue_ids": []}]
+        status = self.execute()
+        self.assertFalse(status["accepted"])
+        self.assertEqual(len(self.build_calls), 1)
+        _, _, _, tasks = MODULE.load_evidence(self.project, status)
+        self.assertTrue(any("face limit" in row["reason"] for row in tasks))
+        self.assertFalse(any(row["blocking"] for row in tasks))
+
+        def fatal_geometry(name, *args, **kwargs):
+            if name == "geometry":
+                raise RuntimeError("unclassified worker failure")
+            return self.tool_worker(name, *args, **kwargs)
+
+        with patch.object(MODULE, "run_tool", side_effect=fatal_geometry):
+            with self.assertRaisesRegex(RuntimeError, "unclassified worker failure"):
+                self.execute()
+        self.assertEqual(len(self.build_calls), 1)
+        self.assertEqual(MODULE.read_json(self.project / "object_pipeline/status.json")["stage"], "failed")
 
     def test_resume_revalidates_existing_mask_bytes(self):
         first = self.execute(stop_after="geometry")

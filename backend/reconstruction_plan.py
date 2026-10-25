@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 
 from world_build import file_hash
 from world_model import WorldStore
@@ -49,6 +49,15 @@ PLAN_SCHEMA = record({
     })},
 })
 
+RESOLUTION = {"enum": ["modeled", "excluded", "unresolved"]}
+_REPORT_FIELDS = {"scene_ids": {"type": "array", "items": ID}, "resolution": RESOLUTION,
+                  "reason": TEXT, "frame_indices": {"type": "array", "minItems": 1, "items": FRAME}}
+MODEL_REPORT_SCHEMA = record({
+    "schema_version": {"const": 1}, "plan_sha256": TEXT, "summary": TEXT,
+    "objects": {"type": "array", "items": record({"plan_id": ID, **_REPORT_FIELDS})},
+    "regions": {"type": "array", "items": record({"region_index": FRAME, **_REPORT_FIELDS})},
+})
+
 
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -67,6 +76,21 @@ def project_file(project, relative):
     if not path.is_relative_to(project) or not path.is_file():
         raise ValueError("planning evidence must be a file in this project")
     return path
+
+
+class ModelingReportError(ValueError):
+    """A malformed builder report that the same builder can repair."""
+
+
+def read_modeling_report(project, relative):
+    try:
+        return read_json(project_file(project, relative))
+    except FileNotFoundError as exc:
+        raise ModelingReportError(f"modeling report missing: {relative}") from exc
+    except json.JSONDecodeError as exc:
+        raise ModelingReportError(f"modeling report JSON line {exc.lineno}, column {exc.colno}: {exc.msg}") from exc
+    except UnicodeDecodeError as exc:
+        raise ModelingReportError("modeling report must contain UTF-8 JSON") from exc
 
 
 def observations(project):
@@ -188,39 +212,67 @@ def unresolved_objects(plan, segments=None, geometry=None):
         mask, mesh = masks.get(obj["id"]), meshes.get(obj["id"])
         if mask and mask["status"] in {"missing", "uncertain"}:
             result.append({"object_id": obj["id"], "reason": mask.get("reason", "分割缺少可靠证据"),
-                           "blocking": obj["geometry_strategy"] == "fuse",
-                           "next_action": "补充视角/框提示，或由计划 Agent 明确改为参考建模" if obj["geometry_strategy"] == "fuse"
-                           else "按原图独立建模；审核仍须检查此物体"})
+                           "blocking": False, "requires_review": True,
+                           "next_action": "建模 Agent 对照原图独立建模，必要时修正分割；由审核复验"})
         if mesh and obj["geometry_strategy"] == "fuse" and mesh["status"] != "ready":
             result.append({"object_id": obj["id"], "reason": mesh.get("reason", "缺少跨视角几何支持"),
-                           "blocking": True, "next_action": "修正实例关联/掩码，或明确改为参考建模"})
-    for row in plan["unexplained_regions"]:
-        result.append({"object_id": "scene", "reason": row["description"], "blocking": True,
-                       "next_action": f"检查原始帧 {row['frame_index']}，补充物体或记录排除证据"})
+                           "blocking": False, "requires_review": True,
+                           "next_action": "建模 Agent 根据原图重建或调整几何表示，在处理报告中说明"})
+    for index, row in enumerate(plan["unexplained_regions"]):
+        result.append({"object_id": "scene", "reason": row["description"],
+                       "blocking": False, "requires_review": True, "region_index": index,
+                       "next_action": f"建模 Agent 检查原始帧 {row['frame_index']}，补建物体或记录排除依据；由审核复验"})
     return result
 
 
-def candidate_coverage(plan, scene):
-    """Grouping-only plan nodes do not require artificial geometry in the world."""
-    planned = {obj["id"]: obj for obj in plan["objects"]}
-    actual = {obj["id"]: obj for obj in scene["objects"]}
-    missing, hierarchy = [], []
-    for obj in planned.values():
-        if obj["kind"] == "group" and obj["id"] not in actual:
-            continue
-        if obj["id"] not in actual:
-            missing.append(obj["id"])
-            continue
-        parent = obj["parent_id"]
-        while parent and planned[parent]["kind"] == "group":
-            parent = planned[parent]["parent_id"]
-        # A modeler may materialize grouping nodes; otherwise skip task-only groups.
-        accepted_parents = {parent, obj["parent_id"]} & ({None} | actual.keys())
-        if actual[obj["id"]]["parent_id"] not in accepted_parents:
-            hierarchy.append(obj["id"])
-    return {"passed": not missing and not hierarchy and not plan["unexplained_regions"],
-            "missing_objects": missing, "hierarchy_mismatches": hierarchy,
-            "unexplained_regions": len(plan["unexplained_regions"])}
+def validate_modeling_report(project, plan_path, scene, report):
+    """Bind the builder's corrections to the initial inventory and source images.
+
+Completeness here is an accounting check, not a visual acceptance decision.
+Splits, merges and exclusions remain visible to the independent critic.
+"""
+    plan = validate_plan(project, read_json(project_file(project, plan_path)))
+    try:
+        Draft202012Validator(MODEL_REPORT_SCHEMA).validate(report)
+    except ValidationError as exc:
+        location = ".".join(str(part) for part in exc.absolute_path) or "$"
+        raise ModelingReportError(f"modeling report {location}: {exc.message[:240]}") from exc
+    if report["plan_sha256"] != file_hash(project_file(project, plan_path)):
+        raise ModelingReportError("modeling report belongs to another initialization plan")
+    planned = {obj["id"]: obj for obj in plan["objects"] if obj["kind"] != "group"}
+    actual = {obj["id"] for obj in scene["objects"]}
+    training = {row["index"] for row in read_json(project_file(project, "observations/manifest.json"))["train"]}
+    seen_objects, seen_regions, unresolved = set(), set(), []
+    for kind, rows in (("objects", report["objects"]), ("regions", report["regions"])):
+        for row in rows:
+            if kind == "objects":
+                key = row["plan_id"]
+                if key not in planned or key in seen_objects:
+                    raise ModelingReportError(f"modeling report has an unknown or repeated planned object: {key}")
+                seen_objects.add(key)
+                cited = {view["frame_index"] for view in planned[key]["observations"]}
+            else:
+                key = row["region_index"]
+                if key >= len(plan["unexplained_regions"]) or key in seen_regions:
+                    raise ModelingReportError(f"modeling report has an unknown or repeated region: {key}")
+                seen_regions.add(key)
+                cited = {plan["unexplained_regions"][key]["frame_index"]}
+            ids, frames = row["scene_ids"], row["frame_indices"]
+            if len(ids) != len(set(ids)) or not set(ids) <= actual:
+                raise ModelingReportError(f"modeling report {kind}/{key} refers to missing or repeated candidate object IDs")
+            if len(frames) != len(set(frames)) or not set(frames) <= training or not set(frames) & cited:
+                raise ModelingReportError(f"modeling report {kind}/{key}: resolution must cite the original object or region's training evidence")
+            if row["resolution"] == "modeled" and not ids:
+                raise ModelingReportError(f"modeling report {kind}/{key}: modeled evidence must map to real candidate objects")
+            if row["resolution"] == "excluded" and ids:
+                raise ModelingReportError(f"modeling report {kind}/{key}: excluded evidence must not claim candidate objects")
+            if row["resolution"] == "unresolved":
+                unresolved.append({"kind": kind, "id": key})
+    missing = sorted(planned.keys() - seen_objects)
+    regions = sorted(set(range(len(plan["unexplained_regions"]))) - seen_regions)
+    return {"passed": not missing and not regions and not unresolved,
+            "missing_objects": missing, "unaddressed_regions": regions,
+            "unresolved": unresolved, "method": "Builder dispositions are complete; independent visual review still required."}
 
 
 def controller_running(project, pid, *script_names):

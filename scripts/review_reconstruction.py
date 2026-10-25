@@ -15,7 +15,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from reconstruction_review import (REVIEW_SCHEMA, PLANNED_REVIEW_SCHEMA, freeze_candidate, project_file, read_json,
+from reconstruction_review import (freeze_candidate, project_file, read_json, review_schema,
                                    validate_review, verify_files, write_json)
 from world_model import WorldStore
 
@@ -61,10 +61,11 @@ def review_prompt(project, frozen, previous):
     planned = ""
     if manifest.get("plan_path"):
         planned = f"""
-This candidate belongs to the object-planning workflow. Read the frozen plan ({manifest['plan_path']}), segments ({manifest['segments_path']}), geometry ({manifest['geometry_path']}) and inventory check ({manifest['inventory_path']}). The plan is a hypothesis, not ground truth. Independently inspect EVERY original training view in source_observations of candidate.json, including areas not mentioned by the planner. Attached source contact sheets cover all frames; open full-resolution original images for small objects, uncertain boundaries and any possible omission. Do not claim a source view was inspected merely because its ID is listed. Recheck excluded_objects against their cited evidence. Inspect observed geometry versus estimated completion and masks versus object texture ownership. A SAM miss must never silently remove an object from acceptance.
-Every issue additionally has target: planning for missing objects, incorrect identity, hierarchy or split granularity; segmentation for mask/association/ownership errors; modeling for shape, materials, pivots or editable-source defects. Use a planned object ID even if it is missing from the candidate. Use object_id='scene' for a newly discovered object outside the plan, citing its exact source_<frame_index> view and region. Actual candidate IDs are also valid. Inspect wall/floor residues and duplicated object textures after hiding or moving an object. Check planned object hierarchy, masks, fused fragments, and model completeness independently. A high image metric cannot waive inventory failures.
-The object inspection contact sheets show BEFORE and HIDDEN renders for each planned object, with its ID and selected view. Inspect every pair for leftover texture/geometry, wrongly disappearing neighbors and exposed holes; open the individual full images listed in editability.json when needed. Camera selection uses projected bounds, not guaranteed visibility. If occlusion prevents a meaningful check, request a better source-bound inspection view; a rendered pair alone does not prove correct separation.
-Acceptance requires all fixed render view IDs AND all source_view_ids in reviewed_views, and all actual candidate object IDs plus all non-group planned IDs in checked_objects. Do not list unchecked IDs simply to satisfy this gate.
+This candidate belongs to the initialized object-modeling workflow. Read the frozen initial plan ({manifest['plan_path']}), segments ({manifest['segments_path']}), geometry ({manifest['geometry_path']}), candidate modeling report ({manifest['modeling_report_path']}) and inventory check ({manifest['inventory_path']}). Planning, SAM3, DA3 and TSDF are INITIALIZATION EVIDENCE ONLY, not final geometry or authoritative object granularity. The builder must reconstruct and refine each object in Blender from the original images, including missed objects, masked-out parts, holes and texture ownership. It may refine parts and hierarchy while retaining coverage of observed objects. Check every report mapping and exclusion against the referenced original frames: a one-to-many or many-to-one mapping must reflect actual corrected object structure, not hide missing geometry. Initial unexplained regions can be resolved by the builder's report and final model; they do not require a revised initial plan. Do not require the builder to preserve an incorrect initial segmentation or rerun initialization before fixing a model.
+Independently inspect EVERY original training view in source_observations of candidate.json, including areas not mentioned by the planner. Attached source contact sheets cover all frames; open full-resolution originals for small objects, uncertain boundaries and possible omissions. Do not claim a source view was inspected merely because its ID is listed. Recheck exclusions and the builder's handling of initially unexplained regions against the original evidence. A SAM miss must never silently remove an object from acceptance.
+Every issue has category: inventory, segmentation, geometry, appearance or editability. These categories describe defects, NOT routing: ALL issues go directly to the same modeling agent for object-by-object reconstruction and repair. In a segmentation issue, specify the required corrected object boundary or texture ownership in the final Blender model, not a request to rerun SAM. A poor initialization mask or mesh is not itself a final-model defect if the builder has corrected it. Use a planned object ID even if it is missing from the candidate. Use object_id='scene' for a newly discovered object outside the plan, citing its exact source_<frame_index> view and region. Actual candidate IDs are also valid. Inspect wall/floor residues and duplicated object textures after hiding or moving an object. Check final hierarchy, completeness and editable geometry independently; an initialization fragment cannot stand in for a completed object. A high image metric cannot waive inventory failures.
+The object inspection contact sheets show BEFORE and HIDDEN renders for every actual candidate object, with its ID and selected view. Inspect every pair for leftover texture/geometry, wrongly disappearing neighbors and exposed holes; open the individual full images listed in editability.json when needed. Camera selection uses projected bounds, not guaranteed visibility. If occlusion prevents a meaningful check, request a better source-bound inspection view; a rendered pair alone does not prove correct separation.
+Acceptance requires all fixed render view IDs AND all source_view_ids in reviewed_views, and all actual candidate object IDs in checked_objects, including newly modeled objects beyond the initial plan. Recheck all initial objects and unexplained regions through the bound modeling report. Do not list unchecked IDs simply to satisfy this gate.
 """
     return f"""You are the independent visual reconstruction critic, not the modeler.
 User goal: convincingly reconstruct this real scene, with complete individually editable objects. Physics is DEFERRED.
@@ -108,6 +109,7 @@ def run(options):
             print(json.dumps({"stage": stage, "round": status["round"], **fields}, ensure_ascii=False), flush=True)
 
         candidate_path, receipt_path = options.candidate, options.receipt
+        modeling_report_path = getattr(options, "modeling_report", None)
         feedback_id, previous = options.feedback_id, getattr(options, "previous_review", None)
         try:
             for number in range(1, options.max_rounds + 1):
@@ -118,13 +120,14 @@ def run(options):
                 frozen = run_dir / f"round_{number:02d}"
                 manifest = freeze_candidate(project, candidate_path, receipt_path, frozen, blender=options.blender,
                                             previous_review=previous, plan_path=getattr(options, "plan", None),
-                                            segments_path=getattr(options, "segments", None), geometry_path=getattr(options, "geometry", None))
+                                            segments_path=getattr(options, "segments", None), geometry_path=getattr(options, "geometry", None),
+                                            modeling_report_path=modeling_report_path)
                 update("reviewing", candidate_id=manifest["candidate_id"], checks=manifest["checks"],
                        object_count=len(manifest["object_ids"]), review_directory=str(frozen.relative_to(project)),
                        views=read_json(frozen / "scene.json")["views"] + [
                            {"id": row["view_id"], "reference_only": True} for row in manifest.get("source_observations", [])])
                 schema = frozen / "review_schema.json"
-                write_json(schema, PLANNED_REVIEW_SCHEMA if manifest.get("plan_path") else REVIEW_SCHEMA)
+                write_json(schema, review_schema(manifest))
                 frozen_previous = project_file(project, manifest["previous_review_path"]) if manifest["previous_review_path"] else None
                 prompt = review_prompt(project, frozen, frozen_previous)
                 (frozen / "review_prompt.txt").write_text(prompt)
@@ -163,14 +166,20 @@ def run(options):
                     write_json(frozen / "publication.json", result)
                     update("accepted", accepted=True, world_revision=result["world_revision"], scene_revision=result["scene"]["revision"])
                     return status
-                if review["verdict"] == "blocked" or number == options.max_rounds or any(
-                        issue.get("target") in {"planning", "segmentation"} for issue in review["issues"]):
+                if review["verdict"] == "blocked" or number == options.max_rounds:
                     update("needs_revision", reason="审核未通过；需处理证据或调整建模方法后开启下一轮。")
                     return status
                 previous = frozen / "review.json"
                 next_dir = Path(candidate_path).parent / f"repair_{number + 1:02d}"
                 candidate_path, receipt_path = str(next_dir / "candidate.json"), str(next_dir / "build_receipt.json")
-                note = f"""独立审核未通过。继续同一真实场景建模任务，先实际查看 {previous} 和 {frozen / 'inspection.json'} 中图像，再处理阻塞问题。逐项修复并检查回归，不要把改名/多分几组当作真实外观完成。所有原候选与审核证据保持不变；新资产、脚本放 {next_dir}。输出 {candidate_path}（revision={world['revision'] + 1}）和 {receipt_path}，使用 build_world(scene=candidate, render=True)；保持原世界坐标和验证相机。不要修改 world/scene.json，不发布，不修改仓库或审核记录。父子对象与本地原点必须通过实际移动旋转测试。物理延后。优先修复这些问题：{json.dumps(review['issues'][:5], ensure_ascii=False)}。检查其余旧问题，不能遗漏。"""
+                report_instruction = ""
+                if manifest.get("plan_path"):
+                    from reconstruction_plan import MODEL_REPORT_SCHEMA
+                    modeling_report_path = str(next_dir / "modeling_report.json")
+                    schema_path = project / next_dir / "modeling_report_schema.json"
+                    write_json(schema_path, MODEL_REPORT_SCHEMA)
+                    report_instruction = f"同时输出 {modeling_report_path}，遵循 {schema_path}，逐项说明每个初始化物体与未解释区域对应的候选对象、修正或排除理由及原图依据。"
+                note = f"""独立审核未通过，全部类别的问题都交给你在Blender中逐物体精细重建和修复。计划、SAM3、DA3、TSDF仅为初始化参考，不再退回计划或分割流程。先实际查看 {previous}、{frozen / 'inspection.json'} 和 {frozen / 'editability.json'} 中图像，再按原始多视角处理漏物体、错误边界、几何、材质与编辑问题。允许细化物体部件和层级，必须覆盖原有物体；不要把改名/多分几组当作真实外观完成。所有原候选与初始化/审核证据保持不变；新资产、脚本放 {next_dir}。输出 {candidate_path}（revision={world['revision'] + 1}）和 {receipt_path}，使用 build_world(scene=candidate, render=True)。{report_instruction}保持原世界坐标和固定验证相机，可补充检查视角。不要修改 world/scene.json，不发布，不修改仓库或审核记录。父子对象与本地原点必须通过实际移动旋转测试。物理延后。优先修复这些问题：{json.dumps(review['issues'][:5], ensure_ascii=False)}。检查其余旧问题，不能遗漏。"""
                 update("repairing")
                 feedback_id = workbench.repair(note, run_id + f"-repair-{number + 1}")
         except Exception as exc:
@@ -187,6 +196,7 @@ def main():
     parser.add_argument("--plan", help="Project-relative object inventory; requires --segments and --geometry")
     parser.add_argument("--segments", help="Segmentation manifest bound to the plan")
     parser.add_argument("--geometry", help="Per-object geometry manifest bound to the plan and masks")
+    parser.add_argument("--modeling-report", help="Candidate object/region handling report; defaults to candidate directory/modeling_report.json")
     parser.add_argument("--previous-review", help="Carry previous issue IDs across controller runs")
     parser.add_argument("--feedback-id", help="Wait for this already submitted builder task before freezing")
     parser.add_argument("--codex", default="codex")
