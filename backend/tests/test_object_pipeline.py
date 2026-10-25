@@ -27,6 +27,7 @@ class ObjectPipelineTests(unittest.TestCase):
         self.project = Path(self.directory.name)
         self.world = {"revision": 3, "objects": []}
         self.plan_calls, self.tool_calls, self.build_calls, self.review_calls = [], [], [], []
+        self.order = []
         self.strategies = ["fuse"]
         self.missing = False
         self.geometry_status = None
@@ -59,6 +60,7 @@ class ObjectPipelineTests(unittest.TestCase):
                         for i, row in enumerate(outer.build_calls)]}
                 raise AssertionError(f"Unexpected workbench request: {path}")
             def repair(self, prompt, key):
+                outer.order.append("repair")
                 outer.build_calls.append({"prompt": prompt, "key": key})
                 if outer.lose_builder_response:
                     outer.lose_builder_response = False
@@ -139,6 +141,7 @@ class ObjectPipelineTests(unittest.TestCase):
         return self.write(str(Path(output) / filename), report)
 
     def review_worker(self, options):
+        self.order.append("review")
         self.assertFalse(MODULE.read_json(self.project / "object_pipeline/status.json")["accepted"])
         self.review_calls.append(options)
         index = len(self.review_calls) - 1
@@ -477,6 +480,52 @@ class ObjectPipelineTests(unittest.TestCase):
         self.assertEqual(status["stage"], "modeled")
         self.assertFalse(status["accepted"])
         self.assertEqual((len(self.build_calls), len(self.review_calls)), (2, 1))
+
+    def test_two_new_reviews_start_with_existing_candidate_and_stop_after_second_repair(self):
+        for verdict in ("revise", "accepted", "blocked"):
+            with self.subTest(verdict=verdict):
+                self.reviews = [{"verdict": verdict, "issues": [], "resolved_issue_ids": []}]
+                first = self.execute(max_rounds=2, stop_after="feedback-modeling")
+                original = (self.project / "object_pipeline" / first["run_id"] / "status.json").read_bytes()
+                before_reviews, before_plans, before_tools = len(self.review_calls), len(self.plan_calls), len(self.tool_calls)
+                self.order.clear()
+                result = self.execute(repair_from=first["run_id"], repair_cycles=2)
+                self.assertEqual(self.order, ["review", "repair", "review", "repair"])
+                self.assertEqual(self.review_calls[before_reviews].candidate, first["candidate_path"])
+                self.assertEqual(self.review_calls[-1].previous_review, f"reconstruction/mock-review-{before_reviews + 1}/round_01/review.json")
+                self.assertTrue(all(not call.publish_after_review for call in self.review_calls[before_reviews:]))
+                self.assertEqual((len(self.plan_calls), len(self.tool_calls)), (before_plans, before_tools))
+                self.assertEqual((result["reviews_completed"], result["repairs_completed"]), (2, 2))
+                self.assertEqual(result["stage"], "modeled")
+                self.assertFalse(result["accepted"])
+                self.assertNotEqual(result["run_id"], first["run_id"])
+                self.assertEqual((self.project / "object_pipeline" / first["run_id"] / "status.json").read_bytes(), original)
+                self.execute(resume=result["run_id"])
+                self.assertEqual(self.order, ["review", "repair", "review", "repair"])
+
+    def test_repair_batch_resume_waits_for_existing_builder_and_preserves_budget(self):
+        first = self.execute(max_rounds=2, stop_after="feedback-modeling")
+        self.order.clear()
+        self.interrupt_builder = True
+        with self.assertRaises(KeyboardInterrupt):
+            self.execute(repair_from=first["run_id"], repair_cycles=2)
+        interrupted = MODULE.read_json(self.project / "object_pipeline/status.json")
+        self.assertEqual(self.order, ["review", "repair"])
+        result = self.execute(resume=interrupted["run_id"], repair_cycles=3)
+        self.assertEqual(self.order, ["review", "repair", "review", "repair"])
+        self.assertEqual((result["reviews_completed"], result["repairs_completed"], result["repair_limit"]), (2, 2, 2))
+
+    def test_uncertain_review_is_not_automatically_repeated(self):
+        first = self.execute(max_rounds=2, stop_after="feedback-modeling")
+        self.order.clear()
+        with patch.object(MODULE, "review_candidate", side_effect=RuntimeError("review interrupted")) as review:
+            with self.assertRaisesRegex(RuntimeError, "review interrupted"):
+                self.execute(repair_from=first["run_id"], repair_cycles=2)
+            interrupted = MODULE.read_json(self.project / "object_pipeline/status.json")
+            with self.assertRaisesRegex(RuntimeError, "review outcome is uncertain"):
+                self.execute(resume=interrupted["run_id"])
+            self.assertEqual(review.call_count, 1)
+        self.assertEqual(self.order, [])
 
     def test_bad_feedback_report_does_not_dispatch_a_third_modeling_task(self):
         self.reviews = [{"verdict": "revise", "issues": [], "resolved_issue_ids": []}]

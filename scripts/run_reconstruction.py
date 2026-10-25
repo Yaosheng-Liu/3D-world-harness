@@ -128,6 +128,7 @@ def modeling_prompt(project, status, candidate, receipt, previous_review=None):
     report_diagnostic = (f"{project / diagnostic}\n{read_json(project_file(project, diagnostic))['message']}"
                          if diagnostic else "无")
     return f"""执行本轮3D-world harness真实场景建模任务。物理暂缓。先看原图、物体清单、分割和逐物体几何证据，再在Blender建模。
+返修起点：{status.get('candidate_path') or '初始化证据'}。已有候选作为修改起点，保留正确部分；以原图和本轮审核为准修正。
 计划：{project / status['plan_path']}
 分割记录：{project / status['segments_path']}
 观测几何：{project / status['geometry_path']}
@@ -184,6 +185,20 @@ def initialize(project, run_dir, round_dir, runtime, status, update, stop_after)
     return stop_after != "geometry"
 
 
+def review_current(project, options, runtime, status, *, publish):
+    role = runtime["reviewer"]
+    review_options = SimpleNamespace(
+        project=project, url=options.url, candidate=status["candidate_path"], receipt=status["receipt_path"],
+        feedback_id=None, codex=role["codex"], blender=runtime.get("blender", "blender"),
+        review_model=role["model"], requested_review_model="gpt-6.1-sol", max_rounds=1,
+        publish_after_review=publish, plan=status["plan_path"], segments=status["segments_path"],
+        geometry=status["geometry_path"],
+        modeling_report=str(Path(status["candidate_path"]).parent / "modeling_report.json"),
+        previous_review=status.get("previous_review"))
+    with codex_home(role.get("home")):
+        return review_candidate(review_options)
+
+
 def run(options):
     feedback_stop = options.stop_after == "feedback-modeling"
     project = options.project.resolve(strict=True)
@@ -195,7 +210,7 @@ def run(options):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if options.resume:
             status = read_json(project_file(project, Path("object_pipeline") / options.resume / "status.json"))
-            if feedback_stop and status.get("feedback_modeling_finished"):
+            if (feedback_stop or status.get("repair_limit")) and status.get("feedback_modeling_finished"):
                 return status
             if status.get("accepted"):
                 raise ValueError("this run has already been accepted; start a new run for new work")
@@ -215,8 +230,18 @@ def run(options):
                       "builder": {"model": "gpt-6-astra", "effort": "high"},
                       "reviewer": {"model": runtime["reviewer"]["model"], "effort": "ultra"},
                       "physics": "deferred", "round": 0}
+            if getattr(options, "repair_from", None):
+                source = read_json(project_file(project, Path("object_pipeline") / options.repair_from / "status.json"))
+                if source["stage"] != "modeled" or source.get("accepted"):
+                    raise ValueError("--repair-from requires a stopped, unpublished modeled candidate")
+                for key in ("base_world_revision", "base_world_hash", "plan_path", "segments_path", "geometry_path",
+                            "candidate_path", "receipt_path", "previous_review", "completed_stages"):
+                    status[key] = source[key]
+                status.update(source_run_id=source["run_id"], repair_limit=options.repair_cycles,
+                              repairs_completed=0, reviews_completed=0, pending_review=True)
             start_round = 1
             resume_pending = False
+        repair_limit = status.get("repair_limit", 0)
         status.update(pid=os.getpid(), error=None, reason=None)
 
         def update(stage, **fields):
@@ -229,11 +254,23 @@ def run(options):
         try:
             if scene_hash(WorldStore(project).read()) != status["base_world_hash"]:
                 raise ValueError("published world changed; start a new run from the current revision")
-            for number in range(start_round, start_round + options.max_rounds):
+            rounds = repair_limit - status["repairs_completed"] if repair_limit else options.max_rounds
+            for number in range(start_round, start_round + rounds):
+                if repair_limit and status.get("review_in_progress"):
+                    raise RuntimeError("review outcome is uncertain; inspect the saved reconstruction run before resuming")
+                if repair_limit and status["pending_review"]:
+                    load_evidence(project, status)
+                    update("reviewing", review_in_progress=True,
+                           reason=f"本次审核 {status['reviews_completed'] + 1}/{repair_limit}；审核后返修，不发布。")
+                    reviewed = review_current(project, options, runtime, status, publish=False)
+                    previous_review = str(Path(reviewed["review_directory"]) / "review.json")
+                    update("reviewing", previous_review=previous_review, review_run_id=reviewed["run_id"],
+                           reviews_completed=status["reviews_completed"] + 1,
+                           pending_review=False, review_in_progress=False)
                 round_dir = run_dir / f"round_{number:02d}"
                 round_dir.mkdir(exist_ok=resume_pending)
                 status["round"] = number
-                if resume_pending:
+                if resume_pending or repair_limit:
                     load_evidence(project, status)
                 elif not initialize(project, run_dir, round_dir, runtime, status, update, options.stop_after):
                     return status
@@ -283,9 +320,22 @@ def run(options):
                         "candidate_path": candidate, "modeling_report_path": report_path, "message": str(exc)})
                     update("needs_revision", builder_diagnostic_path=str(diagnostic.relative_to(project)),
                            checked_feedback_id=feedback_id, reason="建模处理报告格式不完整，已保存返工诊断。")
+                    if repair_limit:
+                        raise
                     if feedback_stop and status.get("feedback_stop_review_path"):
                         update("needs_revision", feedback_modeling_finished=True,
                                reason="反馈建模已结束；处理报告需修正，按本轮限制停止，不再审核或派单。")
+                        return status
+                    resume_pending = False
+                    continue
+                if repair_limit:
+                    completed = status["repairs_completed"] + 1
+                    update("modeled", repairs_completed=completed, pending_review=True,
+                           checked_feedback_id=feedback_id, builder_diagnostic_path=None,
+                           feedback_modeling_finished=completed == repair_limit,
+                           reason=f"本次已完成 {completed}/{repair_limit} 次审核及返修。" +
+                                  ("按要求停止，最终返修尚未复核或发布。" if completed == repair_limit else "准备下一次审核。"))
+                    if completed == repair_limit:
                         return status
                     resume_pending = False
                     continue
@@ -296,15 +346,7 @@ def run(options):
                     return status
                 update("reviewing", builder_diagnostic_path=None,
                        completed_stages=["planning", "segmenting", "geometry", "modeling"])
-                role = runtime["reviewer"]
-                review_options = SimpleNamespace(project=project, url=options.url, candidate=candidate, receipt=receipt,
-                    feedback_id=None, codex=role["codex"], blender=runtime.get("blender", "blender"),
-                    review_model=role["model"], requested_review_model="gpt-6.1-sol", max_rounds=1,
-                    publish_after_review=not feedback_stop,
-                    plan=status["plan_path"], segments=status["segments_path"], geometry=status["geometry_path"],
-                    modeling_report=report_path, previous_review=previous_review)
-                with codex_home(role.get("home")):
-                    reviewed = review_candidate(review_options)
+                reviewed = review_current(project, options, runtime, status, publish=not feedback_stop)
                 previous_review = str(Path(reviewed["review_directory"]) / "review.json")
                 update("reviewing", previous_review=previous_review, review_run_id=reviewed["run_id"],
                        reviewed_feedback_id=feedback_id, checked_feedback_id=feedback_id)
@@ -337,7 +379,11 @@ def main():
     parser.add_argument("--stop-after", choices=("plan", "segment", "geometry", "review", "feedback-modeling"), default="review",
                         help="feedback-modeling runs at most one review, then stops after its modeling feedback is handled")
     parser.add_argument("--max-rounds", type=int, choices=range(1, 4), default=3)
-    parser.add_argument("--resume", help="Continue a saved run, preserving object IDs and prior issues, in a new round")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--resume", help="Continue a saved run; bounded repair batches retain their original limit")
+    source.add_argument("--repair-from", help="Start a bounded review-then-repair batch from a stopped modeled run")
+    parser.add_argument("--repair-cycles", type=int, choices=range(1, 4), default=2,
+                        help="Number of NEW review/repair pairs with --repair-from; stops after the last repair without publishing")
     run(parser.parse_args())
 
 
