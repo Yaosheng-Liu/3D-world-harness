@@ -4,6 +4,18 @@
 
 ![本轮 harness 框架](assets/reconstruction-harness.png)
 
+## 审核反馈分类
+
+反馈直接交给建模 Agent，每条绑定稳定问题 ID、物体 ID、原图/比较视角、归一化区域、具体证据和可复验条件。同一物体的独立缺陷分别记录：
+
+| 类别 | 典型证据 | 修复与复验方向 |
+| --- | --- | --- |
+| `silhouette` · 轮廓错误 | 尺寸比例、边缘或布料垂落形状不匹配 | 先核对相机，再修几何，在对应及其他可见视角检查轮廓 |
+| `texture_alignment` · 纹理错位 | 图案位置偏移、拉伸、接缝或投影重影 | 修 UV、来源视角和遮挡投影，检查图案位置与跨视角一致性 |
+| `lighting` · 光照偏差 | 光斑、阴影方向/软硬、照明颜色或曝光不匹配 | 修灯光与曝光，对照相同相机的 Cycles；不能往底色贴阴影补偿 |
+
+其他问题继续使用 `inventory`、`segmentation`、`geometry`、`appearance`、`editability`；材质底色/粗糙度问题归 `appearance`。颜色差异不能直接证明灯光有错：原因不确定时用 `appearance` 描述已观察到的偏差、可能原因及下一步诊断。审核必须区分观察和推断，不能依据工作台导航照明给场景灯光定错。旧报告保持原类别，不自动猜测重分类；新增分类不代表已经接入几何优化、贴图或光照反演算法。
+
 ## 运行完整流程
 
 入口为 `scripts/run_reconstruction.py`，前置输入沿用[已知相机多视角流程](multiview-reconstruction.md)的 prepared 原图、DA3 深度与已初始化世界。先复制并填写 [runtime.example.json](../examples/object_pipeline/runtime.example.json) 中本机的执行程序和权重路径。计划和审核分别运行只读 Codex 会话；建模复用工具台当前 Astra High 会话。运行环境可为角色指定 `home`，控制器只在调用该角色时设置 `CODEX_HOME`。

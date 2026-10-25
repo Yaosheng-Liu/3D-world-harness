@@ -358,6 +358,25 @@ class PlannedReviewTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             validate_review(manifest, previous)
 
+    def test_visual_defect_categories_remain_distinct_and_bound_to_evidence(self):
+        from jsonschema import ValidationError
+        manifest = self.freeze()
+        issue = {"id": "visual-1", "object_id": "bed", "view_id": "source_0",
+                 "region": [0, 0, 1, 1], "severity": "major",
+                 "evidence": "source-bound mismatch", "acceptance_criterion": "match source_0"}
+        for category in ("silhouette", "texture_alignment", "lighting", "geometry", "appearance"):
+            with self.subTest(category=category):
+                review = {**self.planned_review(), "verdict": "revise",
+                          "issues": [{**issue, "category": category}]}
+                self.assertFalse(validate_review(manifest, review))
+                missing_evidence = deepcopy(review)
+                del missing_evidence["issues"][0]["acceptance_criterion"]
+                with self.assertRaises(ValidationError):
+                    validate_review(manifest, missing_evidence)
+                review["issues"][0]["view_id"] = "unbound-view"
+                with self.assertRaises(ValueError):
+                    validate_review(manifest, review)
+
     def test_historical_target_schema_is_only_accepted_for_old_manifests(self):
         from jsonschema import ValidationError
         manifest = self.freeze()

@@ -26,6 +26,7 @@ const pipelineSteps = [
   ['reviewing','独立审核','对照原图与编辑结果'], ['accepted','通过发布','']
 ];
 const issueCategories = {
+  silhouette:'轮廓错误', texture_alignment:'纹理错位', lighting:'光照偏差',
   inventory:'物体清单', segmentation:'分割与归属', geometry:'几何', appearance:'外观与材质',
   editability:'可编辑性', planning:'物体清单', modeling:'建模'
 };
