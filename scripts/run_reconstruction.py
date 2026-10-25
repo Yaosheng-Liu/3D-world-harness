@@ -298,6 +298,7 @@ def run(options):
                 review_options = SimpleNamespace(project=project, url=options.url, candidate=candidate, receipt=receipt,
                     feedback_id=None, codex=role["codex"], blender=runtime.get("blender", "blender"),
                     review_model=role["model"], requested_review_model="gpt-6.1-sol", max_rounds=1,
+                    publish_after_review=not feedback_stop,
                     plan=status["plan_path"], segments=status["segments_path"], geometry=status["geometry_path"],
                     modeling_report=report_path, previous_review=previous_review)
                 with codex_home(role.get("home")):

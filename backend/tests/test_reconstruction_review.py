@@ -26,19 +26,27 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "examples/physical_world/scene.j
 
 class ReviewerRepairLoopTests(unittest.TestCase):
     def test_segmentation_category_repairs_the_same_builder_without_reinitialization(self):
+        self.exercise_repair_loop(publish=True)
+
+    def test_passing_review_can_return_without_publishing(self):
+        self.exercise_repair_loop(publish=False)
+
+    def exercise_repair_loop(self, *, publish):
         script = Path(__file__).resolve().parents[2] / "scripts/review_reconstruction.py"
         spec = importlib.util.spec_from_file_location("review_reconstruction_loop_test", script)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
-            repairs, reviews, waited = [], [], []
+            repairs, reviews, waited, publications = [], [], [], []
             state = {"project_dir": str(project), "model_settings": {"model": "gpt-6-astra", "reasoning_effort": "high"},
                      "thread_id": "same-modeler-thread", "scene_revision": 1}
 
             class Workbench:
                 def __init__(self, url): pass
                 def call(self, path, payload=None):
+                    if payload:
+                        publications.append(path)
                     return {"world_revision": 2, "scene": {"revision": 2}} if payload else state
                 def repair(self, note, key):
                     repairs.append(note)
@@ -76,12 +84,16 @@ class ReviewerRepairLoopTests(unittest.TestCase):
                 return SimpleNamespace(returncode=0)
 
             options = SimpleNamespace(project=project, url="mock", candidate="candidate.json", receipt="receipt.json",
+                publish_after_review=publish,
                 feedback_id=None, previous_review=None, review_model="gpt-6.1-sol", requested_review_model="gpt-6.1-sol",
                 max_rounds=2, blender="mock", codex="mock", plan="plan.json", segments="segments.json", geometry="geometry.json")
             with patch.object(module, "Workbench", Workbench), patch.object(module.WorldStore, "read", return_value={"revision": 1}), \
                     patch.object(module, "freeze_candidate", side_effect=freeze), patch.object(module.subprocess, "run", side_effect=critic):
                 result = module.run(options)
-            self.assertTrue(result["accepted"])
+            self.assertEqual(result["accepted"], publish)
+            self.assertEqual(len(publications), int(publish))
+            if not publish:
+                self.assertTrue(result["review_passed"])
             self.assertEqual(len(repairs), 1)
             self.assertEqual(len(reviews), 2)
             self.assertEqual(waited, ["repair-feedback"])

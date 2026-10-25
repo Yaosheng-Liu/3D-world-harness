@@ -145,7 +145,7 @@ class ObjectPipelineTests(unittest.TestCase):
         review = copy.deepcopy(self.reviews[min(index, len(self.reviews) - 1)])
         relative = f"reconstruction/mock-review-{index + 1}/round_01"
         self.write(relative + "/review.json", review)
-        return {"accepted": review["verdict"] == "accepted", "summary": "mock review", "run_id": f"mock-review-{index + 1}",
+        return {"accepted": review["verdict"] == "accepted" and getattr(options, "publish_after_review", True), "summary": "mock review", "run_id": f"mock-review-{index + 1}",
                 "review_directory": relative}
 
     def complete_builder(self):
@@ -469,6 +469,13 @@ class ObjectPipelineTests(unittest.TestCase):
         self.assertEqual(len(self.review_calls), 1)
         second = self.execute(resume=first["run_id"], max_rounds=3, stop_after="feedback-modeling")
         self.assertEqual(second["stage"], "modeled")
+        self.assertEqual((len(self.build_calls), len(self.review_calls)), (2, 1))
+
+    def test_feedback_stop_keeps_even_a_passing_review_for_user_inspection(self):
+        status = self.execute(max_rounds=2, stop_after="feedback-modeling")
+        self.assertFalse(self.review_calls[0].publish_after_review)
+        self.assertEqual(status["stage"], "modeled")
+        self.assertFalse(status["accepted"])
         self.assertEqual((len(self.build_calls), len(self.review_calls)), (2, 1))
 
     def test_bad_feedback_report_does_not_dispatch_a_third_modeling_task(self):

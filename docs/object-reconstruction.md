@@ -16,7 +16,7 @@ python scripts/run_reconstruction.py \
 
 `--stop-after plan|segment|geometry` 可在对应初始化阶段结束后停下，不启动后续建模。默认 `review` 运行完整闭环。`--max-rounds` 限制本次调用的建模/审核轮数为 1–3。初始化只执行一次，漏检、几何不足、明确的复杂度限额和未解释区域保留为建模待办，交给建模 Agent 处理；程序执行失败、来源或哈希错误仍明确报错。
 
-`--stop-after feedback-modeling --max-rounds 2` 运行一次建模和一次审核；有反馈时再建模一次即停止，不进行第二次审核，也不发布未经复核的返工候选。若首次审核直接通过，则沿用通过后的发布路径。停止状态为 `modeled`，报告格式有问题则明确记录待修正。审核停止点持久保存，同模式续跑不会重复已完成的反馈建模；下次改用默认 `review` 可审核保留的最终候选。
+`--stop-after feedback-modeling --max-rounds 2` 运行一次建模和一次审核，再交给建模 Agent 处理反馈后停止，不进行第二次审核或自动发布。首次审核直接通过时也保留候选，交给建模 Agent 完成自检后等待用户查看。停止状态为 `modeled`，报告格式有问题则明确记录待修正。审核停止点持久保存，同模式续跑不会重复已完成的反馈建模；下次改用默认 `review` 可审核保留的最终候选。
 
 ```bash
 python scripts/run_reconstruction.py \

@@ -157,6 +157,9 @@ def run(options):
                 update("reviewed", summary=review["summary"], dimensions=review["dimensions"], issues=review["issues"],
                        review_path=str((frozen / "review.json").relative_to(project)))
                 if accepted:
+                    if not getattr(options, "publish_after_review", True):
+                        update("reviewed", review_passed=True, reason="审核通过；本轮保留候选，反馈建模完成后等待用户查看。")
+                        return status
                     update("publishing")
                     result = workbench.call("/api/workspace/reconstruction/accept", {
                         "candidate_path": str((frozen / "candidate.json").relative_to(project)),
