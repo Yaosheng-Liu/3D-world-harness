@@ -51,7 +51,7 @@ _planned_issue["required"].append("target")
 PLANNED_REVIEW_SCHEMA = deepcopy(REVIEW_SCHEMA)
 _planned_issue = PLANNED_REVIEW_SCHEMA["properties"]["issues"]["items"]
 _planned_issue["properties"]["category"] = {"enum": [
-    "inventory", "segmentation", "silhouette", "texture_alignment", "lighting",
+    "inventory", "segmentation", "spatial_structure", "silhouette", "texture_alignment", "lighting",
     "geometry", "appearance", "editability",
 ]}
 _planned_issue["required"].append("category")

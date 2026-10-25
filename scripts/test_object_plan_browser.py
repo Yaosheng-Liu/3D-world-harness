@@ -135,7 +135,7 @@ await window.workflow.refresh(fixture.workspace,true);window.ready=true;
             assert '交给建模 Agent' in page.locator('#flow-issues').inner_text()
             assert '返回计划' not in page.locator('#flow-issues').inner_text()
             # Current categories take precedence; historical target records stay readable.
-            for category, label in [('silhouette', '轮廓错误'), ('texture_alignment', '纹理错位'), ('lighting', '光照偏差')]:
+            for category, label in [('spatial_structure', '空间结构错误'), ('silhouette', '轮廓错误'), ('texture_alignment', '纹理错位'), ('lighting', '光照偏差')]:
                 page.evaluate("async category=>{window.fixture.status.issues[0].category=category;await window.workflow.refresh(window.fixture.workspace,true);}", category)
                 assert label in page.locator('#flow-issues').inner_text()
                 assert '交给建模 Agent' in page.locator('#flow-issues').inner_text()

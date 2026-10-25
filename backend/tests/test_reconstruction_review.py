@@ -364,7 +364,7 @@ class PlannedReviewTests(unittest.TestCase):
         issue = {"id": "visual-1", "object_id": "bed", "view_id": "source_0",
                  "region": [0, 0, 1, 1], "severity": "major",
                  "evidence": "source-bound mismatch", "acceptance_criterion": "match source_0"}
-        for category in ("silhouette", "texture_alignment", "lighting", "geometry", "appearance"):
+        for category in ("spatial_structure", "silhouette", "texture_alignment", "lighting", "geometry", "appearance"):
             with self.subTest(category=category):
                 review = {**self.planned_review(), "verdict": "revise",
                           "issues": [{**issue, "category": category}]}
