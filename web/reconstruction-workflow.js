@@ -49,7 +49,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     <div class="flow-plan-columns"><div><div id="flow-plan-list" class="flow-plan-list" aria-label="初始物体清单"></div>
     <div id="flow-unresolved"></div></div><div class="flow-plan-detail">
     <h4 id="flow-plan-object-name"></h4><p id="flow-plan-object-notes"></p>
-    <p id="flow-plan-publication" class="flow-muted"></p><button id="flow-plan-focus" type="button" disabled>定位当前已发布物体</button>
+    <p id="flow-plan-publication" class="flow-muted"></p><button id="flow-plan-focus" type="button" disabled>定位当前显示物体</button>
     <label for="flow-plan-view">原始证据视角</label><select id="flow-plan-view"></select>
     <div id="flow-plan-images" class="flow-comparison" hidden><figure><figcaption>原始参考</figcaption><img id="flow-plan-reference" alt="计划物体所在的原始参考图"/></figure>
     <figure id="flow-plan-mask-figure"><figcaption>实例掩码叠图 · 分割证据</figcaption><img id="flow-plan-mask" alt="计划物体的实例分割掩码叠图"/></figure></div>
@@ -84,11 +84,12 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
 
   function fillObject() {
     const obj = selectedObject();
+    el('edit-form').hidden = Boolean(editor?.draft);
     for (const field of ['position','rotation']) [...el(field).querySelectorAll('input')].forEach((input,i) => {
       input.value = obj ? Number((obj[field][i] * (field === 'rotation' ? 180 / Math.PI : 1)).toFixed(6)) : '';
     });
     el('object-evidence').textContent = obj ? `父对象：${obj.parent_id || '场景'}。${obj.evidence.notes}` : '';
-    el('apply').disabled = saving || !obj || !editor?.matches_display || isBusy();
+    el('apply').disabled = saving || !obj || !editor?.matches_display || editor?.editable === false || isBusy();
     el('focus').disabled = !obj;
   }
 
@@ -99,7 +100,9 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
       editor = next;
       el('object').replaceChildren(...editor.objects.map(obj => new Option(obj.name + ' · ' + obj.id, obj.id)));
       if (editor.objects.some(obj => obj.id === selected)) el('object').value = selected;
-      el('editor-status').textContent = `显示 v${editor.scene_revision} · 世界 v${editor.revision} · ${editor.objects.length} 个对象`;
+      el('editor-status').textContent = editor.draft
+        ? `建模中预览 v${editor.scene_revision} · ${editor.objects.length} 个对象 · 可定位、标注并提交修改意见，尚未验收`
+        : `显示 v${editor.scene_revision} · 世界 v${editor.revision} · ${editor.objects.length} 个对象`;
       el('units').textContent = editor.units === 'm' ? '位置单位：米。修改父对象会带动其子对象。' : '位置使用重建坐标，尚未标定米制尺度。修改父对象会带动其子对象。';
       fillObject(); showPlannedPublication();
     } catch (error) {
@@ -128,7 +131,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     const published = obj && editor?.matches_display && editor.objects.some(item => item.id === obj.id);
     el('plan-focus').disabled = !published;
     el('plan-publication').textContent = !obj ? '' : published
-      ? '此 ID 已存在于当前显示版本；计划证据与最新建模候选仍需分别验收。'
+      ? '此 ID 已存在于当前显示版本；可定位和标注，质量仍以独立审核为准。'
       : '此物体 ID 尚未出现在当前显示版本中；这里展示计划与证据。';
   }
 
@@ -226,6 +229,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
       node.classList.toggle('done', completed.has(node.dataset.stage) || (!plan && node.dataset.stage === 'accepted' && status.accepted === true));
     }
     const facts = [
+      ['当前预览', status.preview ? `${status.preview.object_count} 个对象 · 未验收 · ${status.preview.summary}` : '等待建模阶段更新'],
       ['参考资料', workspace.reference_clip ? `${workspace.reference_clip.frames.length} 帧 · 已接入` : '未接入片段'],
       ['初始化 · 计划 Agent', modelLabel(plan?.planner)], ['建模 Agent', modelLabel(status.builder)], ['审核 Agent', modelLabel(status.reviewer)],
       [plan ? '已有候选 · 程序检查' : '程序检查', status.checks ? (Object.values(status.checks).every(Boolean) ? '通过' : '发现问题') : '等待候选'],
@@ -256,14 +260,17 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
       requested_reviewer:status.reviewer?.requested_model, actual_reviewer:status.reviewer?.model,
       builder_thread:status.builder?.thread_id, reviewer_thread:status.reviewer?.thread_id, updated_at:status.updated_at,
       planning:plan ? {run_id:plan.run_id,stage:plan.stage,planner:plan.planner,updated_at:plan.updated_at} : null},null,2);
-    el('apply').disabled = saving || !selectedObject() || !editor?.matches_display || active;
+    el('apply').disabled = saving || !selectedObject() || !editor?.matches_display || editor?.editable === false || active;
   }
 
   async function refresh(nextWorkspace, force=false) {
     workspace = nextWorkspace;
     if (polling || (!force && Date.now()-lastPoll < 5000)) return;
     polling = true; lastPoll = Date.now();
-    try { status = await api('/api/workspace/reconstruction'); render(); }
+    try {
+      status = await api('/api/workspace/reconstruction'); render();
+      if (dialog.open && editor?.scene_revision !== workspace.scene_revision) await refreshEditor();
+    }
     catch (error) { el('stage').textContent = '流程状态暂不可用'; el('summary').textContent = error.message; }
     finally { polling = false; }
   }
@@ -289,7 +296,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
       await loadScene(result.scene); await refreshEditor(); await refresh({...workspace,scene_revision:result.scene.revision},true);
       el('edit-result').textContent = '已保存。新位置已同步到场景与 Cycles；本次编辑尚未重新审核。';
     } catch (error) { el('edit-result').textContent = '未完成：' + error.message; }
-    finally { saving = false; el('apply').disabled = !selectedObject() || !editor?.matches_display || isBusy(); }
+    finally { saving = false; el('apply').disabled = !selectedObject() || !editor?.matches_display || editor?.editable === false || isBusy(); }
   };
   return {refresh};
 }

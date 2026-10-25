@@ -19,7 +19,11 @@ def editor_state(project, store):
     service = WorldService(project, store)
     scene = service.world.read()
     displayed, build = published_build(project, store)
+    draft = build.get("draft_scene")
+    if draft:
+        scene = draft
     return {"revision": scene["revision"], "scene_revision": displayed["revision"], "units": scene["units"],
+            "editable": not bool(draft), "draft": bool(draft),
             "matches_display": build["scene_hash"] == scene_hash(scene),
             "objects": [{key: obj[key] for key in ("id", "name", "parent_id", "position", "rotation", "evidence")}
                         for obj in scene["objects"]]}
@@ -37,6 +41,8 @@ def edit_transform(project, store, payload):
             or (planning_status(project) or {}).get("stage") in ACTIVE_STAGES):
         raise APIError(409, "重建或审核正在运行，完成本轮后再编辑当前版本")
     displayed, build = published_build(project, store)
+    if build.get("draft_scene"):
+        raise APIError(409, "建模中预览支持选择、标注与反馈；请通过修改意见让建模 Agent 调整物体")
     if displayed["revision"] != payload["expected_scene_revision"]:
         raise APIError(409, "显示版本已改变，请刷新物体清单")
     service = WorldService(project, store)

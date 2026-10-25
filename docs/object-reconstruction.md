@@ -28,6 +28,14 @@ python scripts/run_reconstruction.py \
 
 运行状态位于 `object_pipeline/status.json` 与 `object_pipeline/<run_id>/status.json`，每轮保留计划、分割、几何、建模提示与候选。旧审核仍保存在 `reconstruction/`；状态同时记录关联审核运行和报告。工具台的“重建流程 / 物体编辑”显示当前计划及分割证据、待解决事项、独立审核和已发布对象，三者分别展示。
 
+## 建模阶段预览
+
+建模 Agent 每完成一组有意义的物体就构建当前候选，调用 `workspace_preview_world(receipt_path, expected_scene_revision, summary)`。中间构建可使用 `render=False`，工具台立即显示可选择的 GLB，并标注“建模预览 · 未验收”。控制器等待建模时也会自动展示最新完成的构建，重复检查同一构建不会增加显示版本。
+
+用户可查看、选中、定位、标注并提交修改意见。已有标注继续绑定原截图版本，更新不会把标注挪到新几何上。预览对象来自该构建的场景快照，支持对应 Blender 文件的 Cycles 预览；直接位置/旋转编辑保持关闭，由建模 Agent 根据反馈修改候选。
+
+预览只更新显示，不写 `world/scene.json`，也不改变审核结论。预览入口检查场景与构建绑定、GLB对象ID及构建文件哈希；正式的移动旋转、隐藏残留、物体覆盖和质量验收仍在独立审核阶段执行。构建或预览更新失败会明确记录，不能当作验收通过。
+
 审核问题的 `category` 为 `inventory`、`segmentation`、`geometry`、`appearance` 或 `editability`，仅描述缺陷类型，全部直接反馈建模 Agent。它负责补漏、纠正实例和拆分、细化形状、材质与可编辑性，必要时自行调用局部建模/分割工具。新发现的清单外物体可用 `object_id=scene` 和 `source_<frame_index>` 原图区域报告。旧问题必须保持 ID 或明确解决。新冻结审核协议为 `workflow_version=2`；历史 `target` 报告仍可读取。只有独立审核及确定性检查通过，才接受并发布。普通手动发布接口仍是独立路径。
 
 计划流程的候选必须完整保留当前世界的固定验证相机、内参和原图路径，可增加检查视角，不能删除或改绑原有视角。独立重开 Blender 后，逐对象进行变换检查，并生成隐藏自身及后代前后的图像与接触表。相机按投影包围盒选择，遮挡可能仍使检查不充分，审核 Agent 必须指出并要求补机位。`edit_visual_coverage` 只证明每个应检对象有检查图片，物体分离正确性由原图和逐对象图片共同审核。

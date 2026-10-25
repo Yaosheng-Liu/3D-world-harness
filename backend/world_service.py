@@ -50,8 +50,17 @@ WORLD_TOOLS = [
     _tool("publish", "Publish a verified, current-world GLB through the existing scene revision guard. A physics animation with failed checks cannot be published by this tool.",
           {"expected_revision": REVISION, "expected_scene_revision": REVISION, "build_id": RUN_ID},
           ["expected_revision", "expected_scene_revision", "build_id"]),
+    _tool("preview", "Show a completed intermediate Blender/GLB build for viewing, selection and annotated feedback. Does not modify world/scene.json or approve the candidate. Call after each meaningful modeling milestone.",
+          {"receipt_path": {"type": "string", "minLength": 1}, "expected_scene_revision": REVISION,
+           "summary": {"type": "string", "minLength": 1, "maxLength": 300}},
+          ["receipt_path", "expected_scene_revision", "summary"]),
 ]
 WORLD_TOOL_MAP = {tool["name"]: tool for tool in WORLD_TOOLS}
+
+
+def displayed_preview(store):
+    objects = store.scene()["objects"]
+    return objects[0].get("metadata", {}).get("reconstruction_preview") if len(objects) == 1 else None
 
 
 class WorldService:
@@ -198,3 +207,39 @@ class WorldService:
                 raise ValueError("physics checks failed; inspect the simulation report before publishing")
             scene = self.scene_store.set_scene_preview(str(self._file(build["glb_path"])), expected_revision=expected_scene_revision)
         return {"scene": scene, "world_revision": expected_revision, "build_id": build_id, "evaluation": evaluation}
+
+    def preview(self, receipt_path, expected_scene_revision, summary):
+        from datetime import datetime, timezone
+        from world_build import file_hash, inspect_glb
+        from world_model import validate_scene
+
+        if self.scene_store is None:
+            raise ValueError("preview requires a running workbench")
+        receipt = json.loads(self._file(receipt_path).read_text())
+        directory = self._file(str(Path(receipt["build_dir"]) / "job.json")).parent
+        scene = validate_scene(json.loads((directory / "job.json").read_text())["scene"], self.project_dir)
+        self._match(scene, receipt)
+        for key, filename in (("glb_path", "scene.glb"), ("blend_path", "scene.blend")):
+            if self._file(receipt[key]) != directory / filename or filename not in receipt["files"]:
+                raise ValueError("preview must use its completed build's GLB and Blender files")
+        for name, digest in receipt["files"].items():
+            if file_hash(self._file(str(directory / name))) != digest:
+                raise ValueError("preview build changed; finish a new build before updating")
+        inspect_glb(self._file(receipt["glb_path"]), {obj["id"] for obj in scene["objects"]})
+        with self.world._lock(), self.scene_store.lock:
+            current = self.world.read()
+            if scene["revision"] not in {current["revision"], current["revision"] + 1}:
+                raise APIError(409, "preview belongs to another world revision")
+            if self.scene_store.scene()["revision"] != expected_scene_revision:
+                raise APIError(409, "display changed; refresh before updating the preview")
+            previous = displayed_preview(self.scene_store)
+            if previous and previous["glb_sha256"] == receipt["files"]["scene.glb"]:
+                return {"scene": self.scene_store.scene(), "preview": previous}
+            record = self._save_record("receipts", {**receipt, "draft_scene": scene, "preview_status": "draft",
+                                                   "preview_summary": summary})
+            preview = {"id": record["id"], "summary": summary, "status": "draft", "accepted": False,
+                       "object_count": len(scene["objects"]), "glb_sha256": receipt["files"]["scene.glb"],
+                       "updated_at": datetime.now(timezone.utc).isoformat()}
+            shown = self.scene_store.set_scene_preview(receipt["glb_path"], expected_revision=expected_scene_revision,
+                                                      reconstruction_preview=preview)
+            return {"scene": shown, "preview": preview}

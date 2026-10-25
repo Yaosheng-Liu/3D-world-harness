@@ -397,6 +397,17 @@ def workspace_evaluate_world(expected_revision: int, build_id: str, simulation_i
 
 
 @mcp.tool()
+def workspace_preview_world(receipt_path: str, expected_scene_revision: int, summary: str) -> dict[str, Any]:
+    """Show a completed intermediate build for selection, annotations and feedback, without accepting or changing the world.
+
+    Build a candidate with build_world first; pass its receipt.json after each meaningful group of objects.
+    The workbench labels the result unreviewed. Existing annotations stay bound to their captured version.
+    """
+    return _world("preview", {"receipt_path": receipt_path, "expected_scene_revision": expected_scene_revision,
+                              "summary": summary}, timeout=120)
+
+
+@mcp.tool()
 def workspace_publish_world(expected_revision: int, expected_scene_revision: int, build_id: str) -> dict[str, Any]:
     """Publish a validated current-world GLB using separate world and displayed scene revision guards."""
     return _world("publish", {"expected_revision": expected_revision, "expected_scene_revision": expected_scene_revision,

@@ -64,7 +64,7 @@ class ObjectPipelineTests(unittest.TestCase):
                     outer.lose_builder_response = False
                     raise RuntimeError("submission response lost after server persisted feedback")
                 return f"feedback-{len(outer.build_calls)}"
-            def wait_builder(self, feedback_id):
+            def wait_builder(self, feedback_id, **kwargs):
                 if outer.interrupt_builder:
                     outer.interrupt_builder = False
                     raise KeyboardInterrupt("controller interrupted while modeler continues")

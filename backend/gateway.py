@@ -1715,9 +1715,15 @@ class WorkspaceGateway:
         for index, image in enumerate(plan["images"], 1):
             paths.append(image["path"])
             lines.append(f"{index}. " + image_caption(image))
-        lines.append("标记是用户指示，叠图重影不是新增物体。帧号引用从1起，frame_index从0起；时间是片段相对秒，修改时段以提示为准。完整证据按details读取；完成后用workspace_publish_scene发布GLB。")
-        if (self.project_dir / "world" / "scene.json").is_file():
+        from world_service import displayed_preview
+        preview = displayed_preview(self.store)
+        lines.append("标记是用户指示，叠图重影不是新增物体。帧号引用从1起，frame_index从0起；时间是片段相对秒，修改时段以提示为准。完整证据按details读取。")
+        if preview:
+            lines.append(f"当前显示的是未验收建模预览，快照在world/receipts/{preview['id']}/receipt.json的draft_scene。按截图版本解释物体ID和标记，将修改落实到当前建模候选，不覆盖world/scene.json。每完成一组物体，构建后用workspace_preview_world更新预览；正式检查由独立审核负责。")
+        elif (self.project_dir / "world" / "scene.json").is_file():
             lines.append("本项目有对象级world/scene.json。先用workspace_inspect_world读取对象与世界版本；GLB节点stable_id对应对象ID。用workspace_edit_world修改源记录，按需simulate/build/evaluate，最后用workspace_publish_world发布；世界版本和显示场景版本分别读取。")
+        else:
+            lines.append("完成后用workspace_publish_scene发布GLB。")
         if manifest.get("human_pose"):
             lines.append("人体按evidence_kind/keypoint_profile解读；projected_3d不是二维实测，跨机位身份须有证据。")
         if manifest.get("human_pose_edits"):

@@ -68,9 +68,16 @@ def published_build(project, store):
             or obj.get("rotation") != [0, 0, 0] or obj.get("size") != [1, 1, 1]):
         raise APIError(409, "Publish the world build before using Cycles")
     digest = obj.get("metadata", {}).get("sha256")
+    preview = obj.get("metadata", {}).get("reconstruction_preview")
+    if preview:
+        from world_service import WorldService
+        record = WorldService(project)._record("receipts", preview["id"])
+        if record["files"]["scene.glb"] != digest:
+            raise APIError(409, "Draft preview does not match its Blender build")
+        return scene, record
     for path in sorted((Path(project) / "world/receipts").glob("*/receipt.json")):
         record = json.loads(path.read_text())
-        if digest and record.get("files", {}).get("scene.glb") == digest and "blend_path" in record:
+        if digest and not record.get("draft_scene") and record.get("files", {}).get("scene.glb") == digest and "blend_path" in record:
             return scene, record
     raise APIError(409, "No matching Blender build for the displayed scene")
 

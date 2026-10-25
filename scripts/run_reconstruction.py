@@ -134,7 +134,8 @@ def modeling_prompt(project, status, candidate, receipt, previous_review=None):
 上轮审核：{previous_review or '无'}
 建模报告格式返工诊断（不是独立审核）：{report_diagnostic}
 前面的计划、SAM、DA3/TSDF都是初始化。你负责逐个物体精细建模，并负责所有审核返工，包括漏物体、错误拆分/实例对应、分割边界和几何缺口，不等待计划Agent或前处理替你解决。默认保留稳定ID；如原清单认错、需拆分/合并或调整层级，可依据原图纠正，在modeling_report.json中明确映射，不可静默删除。group只是任务分组，可省略无几何的group节点。不能把TSDF碎片或裁剪照片当作已完成模型；SAM漏检或几何超限的物体仍须按原图建模，必要时自己调用工具修正局部证据。未观测面标为estimated。限制纹理来源，不能把枕头/灯具烘焙到邻物体。
-按priority建模并检查移动/旋转：移动物体后旧位置不能残留重复几何或纹理，墙地面不能被一起带走。材质、原点、层级与轮廓都需要检查。独立审核将逐项检查所有原图、计划覆盖和旧问题。
+按priority逐组建模。每完成一组有意义的物体（例如床架和床头、床品、两侧柜灯），就用build_world生成完整当前候选的Blender/GLB，render=False即可；随后用workspace_preview_world传入构建receipt.json、当前显示版本和简短完成说明，更新工具台。中间预览允许尚未建完，只展示实际完成的几何，不伪造其余部分；保持稳定ID，并在下一次预览保留已完成对象。预览不代表验收，不修改world/scene.json。
+你负责正常构建所需的基本有效性；正式的移动/旋转、隐藏残留、完整性和原图质量检查交给独立审核阶段，不重复执行整套验收。独立审核会核对原图、物体处理覆盖和旧问题。
 当前世界版本为{status['base_world_revision']}。输出完整候选 {candidate}，revision={status['base_world_revision']+1}；所有新脚本、资产放候选同目录。用build_world(scene=candidate,render=True)构建，将完整receipt写到{receipt}。保持原坐标、全部已有验证相机和原始来源。不要修改world/scene.json、已发布文件、计划/分割/几何证据、审核记录或仓库代码，不要发布。候选由独立审核通过后统一发布。
 另外输出候选同目录的modeling_report.json，严格遵循该目录modeling_report_schema.json。报告绑定初始plan文件SHA-256，objects逐项记录每个初始非group物体对应的scene_ids；regions逐项处理初始unexplained_regions的索引。resolution为modeled/excluded/unresolved，每条给reason和原始frame_indices依据。拆合可显式映射一对多/多对一；排除必须有证据，不能凭分割失败否认物体。报告只说明如何处理初始化，不代表你可以自行验收；所有问题由独立审核复验。原初始化与旧审核证据保持不变。
 """
@@ -265,7 +266,7 @@ def run(options):
                            feedback_id=None, builder_request={"key": key, "session_id": current["session_id"]})
                     feedback_id = workbench.repair(prompt, key)
                 update("modeling", feedback_id=feedback_id)
-                workbench.wait_builder(feedback_id)
+                workbench.wait_builder(feedback_id, preview_project=project)
                 # Evidence and candidate failures stay fatal; only builder-report
                 # format errors return to this builder without inventing a review.
                 observations(project)

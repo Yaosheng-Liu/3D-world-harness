@@ -2599,7 +2599,8 @@ async function loadScene(sceneData) {
     renderSelection();
     renderAnnotations();
     drawOverlays();
-    id('revision-label').textContent = '版本 ' + scene.revision;
+    const reconstructionPreview = scene.objects?.[0]?.metadata?.reconstruction_preview;
+    id('revision-label').textContent = reconstructionPreview ? '建模预览 · 未验收 · v' + scene.revision : '版本 ' + scene.revision;
     state.sceneDisplayName = scene.name || '当前场景';
     updateProjectTitle();
     id('scene-title').textContent = scene.name || '';

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from urllib.request import ProxyHandler, Request, build_opener
+from urllib.error import HTTPError
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
@@ -34,13 +35,32 @@ class Workbench:
         with self.opener.open(request, timeout=330) as response:
             return json.load(response)
 
-    def wait_builder(self, feedback_id):
+    def refresh_preview(self, project, state):
+        receipts = list((Path(project) / "world/builds").glob("*/receipt.json"))
+        if not receipts:
+            return
+        receipt = max(receipts, key=lambda path: path.stat().st_mtime_ns)
+        version = (str(receipt), receipt.stat().st_mtime_ns)
+        if version == getattr(self, "_last_preview", None):
+            return
+        try:
+            self.call("/api/workspace/reconstruction/preview", {
+                "receipt_path": str(receipt.relative_to(project)), "expected_scene_revision": state["scene_revision"],
+                "summary": "建模阶段更新；可选中、标注并提交修改意见，尚未验收"})
+        except HTTPError as error:
+            # Preview failure must not discard modeling work or bypass review.
+            print(json.dumps({"preview_error": error.read().decode()[:500], "receipt": str(receipt)}), flush=True)
+        self._last_preview = version
+
+    def wait_builder(self, feedback_id, *, preview_project=None):
         while True:
             state = self.call("/api/workspace/state")
             item = next(item for item in state["queue"] if item["feedback_id"] == feedback_id)
+            if preview_project is not None and item["status"] in {"running", "completed"}:
+                self.refresh_preview(preview_project, state)
             if item["status"] == "completed":
                 return state
-            if item["status"] in {"failed", "cancelled", "delivery_uncertain", "blocked_stale"}:
+            if item["status"] in {"failed", "cancelled", "interrupted", "delivery_uncertain", "blocked_stale"}:
                 raise RuntimeError(f"builder {item['status']}: {item.get('error')}")
             # Approvals are shown by the existing workbench, never silently accepted here.
             time.sleep(5)

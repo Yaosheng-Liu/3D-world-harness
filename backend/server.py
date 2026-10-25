@@ -30,7 +30,7 @@ from core import APIError, SceneStore
 from gateway import WorkspaceGateway
 from projects import ProjectContext, ProjectRegistry
 from human_pose import HumanPoseJobs, prepare_pose_edit_feedback
-from world_service import WORLD_TOOL_MAP, WorldService
+from world_service import WORLD_TOOL_MAP, WorldService, displayed_preview
 from cycles_preview import published_build, render_preview
 from reconstruction_review import accept_candidate, review_status, review_image
 from reconstruction_plan import planning_status, planning_image
@@ -588,7 +588,11 @@ def _make_server_unlocked(
                 self._require_browser_capability()
                 return self._send_json(200, render_preview(project_root, store, self._read_json()))
             if self.command == "GET" and path == "/api/workspace/reconstruction":
-                return self._send_json(200, {**review_status(project_root), "planning": planning_status(project_root)})
+                return self._send_json(200, {**review_status(project_root), "planning": planning_status(project_root),
+                                             "preview": displayed_preview(store)})
+            if self.command == "POST" and path == "/api/workspace/reconstruction/preview":
+                self._require_browser_capability()
+                return self._send_json(200, WorldService(project_root, store).call("workspace_preview_world", self._read_json()))
             if self.command == "GET" and path == "/api/workspace/object-plan/image":
                 try:
                     result = planning_image(project_root, query.get("object_id", [""])[0],

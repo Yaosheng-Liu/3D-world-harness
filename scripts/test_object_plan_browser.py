@@ -124,7 +124,7 @@ await window.workflow.refresh(fixture.workspace,true);window.ready=true;
             assert '初始证据可用，等待精细建模' in page.locator('#flow-stage').inner_text()
             assert '计划 / SAM / DA3 / TSDF' in page.locator('.flow-steps [data-stage=initialization]').inner_text()
             assert '建模 Agent 返工' in page.locator('.flow-review-loop').inner_text()
-            assert '初始证据不代表最终还原质量' in page.locator('#flow-plan-counts').inner_text()
+            assert '初始化缺口' in page.locator('#flow-plan-counts').inner_text()
             assert '已有审核记录' in page.locator('#flow-candidate').inner_text()
             assert not page.locator('.flow-steps [data-stage=accepted]').evaluate("e=>e.classList.contains('done')")
             page.locator('#flow-issues button').click()
@@ -173,6 +173,23 @@ await window.workflow.refresh(fixture.workspace,true);window.ready=true;
             page.locator('#flow-apply').click()
             page.wait_for_function("document.querySelector('#flow-edit-result').textContent.startsWith('已保存')")
             assert page.evaluate('window.saved[0].position[0]') == .25
+            page.evaluate("""async()=>{
+              fixture.editor.draft=true;fixture.editor.editable=false;
+              fixture.editor.scene_revision=5;fixture.workspace.scene_revision=5;
+              fixture.editor.objects.push({...fixture.editor.objects[0],id:'new_part',name:'新增床头'});
+              fixture.status.preview={object_count:2,summary:'床架与床头已完成'};
+              await workflow.refresh(fixture.workspace,true);
+            }""")
+            assert page.locator('#flow-object option').count() == 2
+            assert page.locator('#flow-edit-form').is_hidden()
+            assert page.locator('#flow-focus').is_enabled()
+            assert '建模中预览' in page.locator('#flow-editor-status').inner_text()
+            page.evaluate("""async()=>{
+              fixture.editor.draft=false;fixture.editor.editable=true;fixture.editor.objects.pop();
+              fixture.editor.scene_revision=6;fixture.workspace.scene_revision=6;delete fixture.status.preview;
+              await workflow.refresh(fixture.workspace,true);
+            }""")
+            assert page.locator('#flow-edit-form').is_visible()
             page.set_viewport_size({'width': 390, 'height': 844})
             assert page.locator('#reconstruction-dialog').evaluate('e=>e.scrollWidth<=e.clientWidth+2')
             page.screenshot(path=str(args.output / 'mobile.png'))
@@ -190,7 +207,8 @@ await window.workflow.refresh(fixture.workspace,true);window.ready=true;
                   'previous_review_separate': True, 'existing_editor_preserved': True,
                   'active_plan_blocks_edit': True, 'mobile_no_overflow': True,
                   'legacy_without_plan': True, 'source_only_review_issue': True, 'initialization_only': True,
-                  'all_review_feedback_to_modeler': True, 'legacy_issue_category': True, 'page_errors': errors}
+                  'all_review_feedback_to_modeler': True, 'legacy_issue_category': True,
+                  'draft_preview_objects_refresh': True, 'page_errors': errors}
         (args.output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result, indent=2))
     finally:

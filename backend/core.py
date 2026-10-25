@@ -1519,7 +1519,7 @@ class SceneStore:
             raise
         return f"/assets/{file_name}", hasher.hexdigest()
 
-    def set_scene_preview(self, local_path: str, *, expected_revision: int | None = None) -> dict[str, Any]:
+    def set_scene_preview(self, local_path: str, *, expected_revision: int | None = None, reconstruction_preview: dict | None = None) -> dict[str, Any]:
         """Atomically replace the visible result with one stable selectable GLB."""
         source = self._validate_glb_source(local_path)
         with self.lock:
@@ -1527,6 +1527,8 @@ class SceneStore:
                 self._check_revision(expected_revision)
             url, digest = self._copy_glb(source)
             obj = self._validate_object({"id": "scene_preview", "name": source.stem[:120] or "Current scene", "type": "model", "url": url, "position": [0, 0, 0], "size": [1, 1, 1], "rotation": [0, 0, 0], "color": "#ffffff", "metadata": {"source_name": source.name, "sha256": digest}})
+            if reconstruction_preview is not None:
+                obj["metadata"]["reconstruction_preview"] = copy.deepcopy(reconstruction_preview)
             scene = self.state["scene"]
             scene["objects"] = [obj]
             scene["revision"] += 1
