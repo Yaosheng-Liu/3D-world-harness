@@ -5,9 +5,79 @@ from pathlib import Path
 import sys
 
 import bpy
+from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Matrix, Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+def best_inspection_view(scene, points, views, cameras):
+    """Choose by clipped projected bounds; this does not establish visibility."""
+    from world_blender import configure_camera
+    choices = []
+    for view in views:
+        camera = cameras[view["id"]]
+        configure_camera(scene, camera, view)
+        projected = [world_to_camera_view(scene, camera, point) for point in points]
+        front = [point for point in projected if point.z > camera.data.clip_start]
+        if not front:
+            continue
+        x0, x1 = max(0., min(point.x for point in front)), min(1., max(point.x for point in front))
+        y0, y1 = max(0., min(point.y for point in front)), min(1., max(point.y for point in front))
+        area = max(0., x1 - x0) * max(0., y1 - y0)
+        if area <= 1e-6:
+            continue
+        choices.append((area * len(front) / len(points), view,
+                        [x0, 1 - y1, x1, 1 - y0], area))
+    return max(choices, key=lambda item: item[0]) if choices else None
+
+
+def object_inspections(scene, roots, meshes, views, object_ids, output):
+    from world_blender import configure_camera
+    cameras = {obj["world_view_id"]: obj for obj in scene.objects if obj.get("world_view_id")}
+    directory = output / "object_edits"
+    directory.mkdir(exist_ok=True)
+    result = []
+    scene.cycles.samples = 4
+    for key in object_ids:
+        row = {"object_id": key, "status": "missing"}
+        root = roots.get(key)
+        if root is None:
+            result.append(row)
+            continue
+        descendants = {root, *root.children_recursive}
+        points = [obj.matrix_world @ Vector(corner) for obj in meshes if obj in descendants
+                  for corner in obj.bound_box]
+        chosen = best_inspection_view(scene, points, views, cameras) if points else None
+        if chosen is None:
+            result.append({**row, "status": "not_visible"})
+            continue
+        _, view, region, area = chosen
+        scene.camera = cameras[view["id"]]
+        configure_camera(scene, scene.camera, view)
+        scene.render.resolution_percentage = max(1, min(100, int(48000 / max(
+            scene.render.resolution_x, scene.render.resolution_y))))
+        # Keep surrounding surfaces in frame to expose baked replicas and holes.
+        x0, y0, x1, y1 = region
+        padx, pady = max(.04, (x1 - x0) * .2), max(.04, (y1 - y0) * .2)
+        region = [max(0., x0 - padx), max(0., y0 - pady), min(1., x1 + padx), min(1., y1 + pady)]
+        before, hidden = directory / f"{key}-before.png", directory / f"{key}-hidden.png"
+        scene.render.filepath = str(before)
+        bpy.ops.render.render(write_still=True)
+        original = {obj: obj.hide_render for obj in descendants}
+        try:
+            for obj in descendants:
+                obj.hide_render = True
+            bpy.context.view_layer.update()
+            scene.render.filepath = str(hidden)
+            bpy.ops.render.render(write_still=True)
+        finally:
+            for obj, value in original.items():
+                obj.hide_render = value
+            bpy.context.view_layer.update()
+        result.append({**row, "status": "rendered", "view_id": view["id"], "region": region,
+                       "projected_fraction": area, "before_path": str(before), "hidden_path": str(hidden)})
+    return result
 
 
 def main():
@@ -60,8 +130,14 @@ def main():
                         "bounds": [list(lo), list(hi)], "pivot": list(pivot)})
         root.matrix_world = base[key]
         bpy.context.view_layer.update()
+    inspections = object_inspections(scene, roots, meshes, job["scene"]["views"],
+                                     job.get("inspection_object_ids", []), output)
     result = {"passed": all(item["passed"] for item in results), "objects": results,
               "demonstration_object": demonstration, "demonstration_view": view["id"],
+              "object_inspections": inspections,
+              "visual_checks_complete": all(item["status"] == "rendered" for item in inspections),
+              "visibility_method": "Fixed view with largest clipped projected object bounds, weighted by front-facing corner count.",
+              "visibility_limits": "Projection does not prove visibility through occluders. Critic must inspect each before/hidden pair; no visible fixed view blocks coverage.",
               "method": "Reopened Blender source; translate and rotate each root, check every visual mesh, restore without saving.",
               "limits": "Transform isolation does not prove semantic segmentation or absence of duplicated surfaces; critic must check images."}
     (output / "editability.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")

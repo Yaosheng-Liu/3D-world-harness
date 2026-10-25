@@ -6,6 +6,7 @@ import os
 from core import APIError
 from cycles_preview import published_build
 from reconstruction_review import review_status
+from reconstruction_plan import planning_status, ACTIVE_STAGES
 from world_build import build_world
 from world_model import scene_hash
 from world_service import WorldService
@@ -32,7 +33,8 @@ def edit_transform(project, store, payload):
         if (not isinstance(values, list) or len(values) != 3
                 or any(type(value) not in (int, float) or not math.isfinite(value) for value in values)):
             raise APIError(400, "transforms must contain three finite numbers")
-    if review_status(project)["stage"] in BUSY_STAGES:
+    if (review_status(project)["stage"] in BUSY_STAGES
+            or (planning_status(project) or {}).get("stage") in ACTIVE_STAGES):
         raise APIError(409, "重建或审核正在运行，完成本轮后再编辑当前版本")
     displayed, build = published_build(project, store)
     if displayed["revision"] != payload["expected_scene_revision"]:

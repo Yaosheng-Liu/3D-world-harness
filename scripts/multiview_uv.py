@@ -3,6 +3,10 @@ import json
 import numpy as np
 
 
+class UVRefinementLimit(ValueError):
+    """An explicit refinement budget requires a different object representation."""
+
+
 def projection_errors(vertices, faces, sources, extrinsics, intrinsics):
     errors = np.zeros(len(faces))
     for source in np.unique(sources[sources >= 0]):
@@ -70,7 +74,7 @@ def refine_projective_uv(vertices, faces, sources, extrinsics, intrinsics,
                          tolerance=.5, max_iterations=8, max_faces=1000000):
     original_count = len(faces)
     if original_count > max_faces:
-        raise ValueError('Input surface exceeds the explicit UV refinement face limit')
+        raise UVRefinementLimit(f'Input surface has {original_count} faces; UV refinement face limit is {max_faces}')
     initial_errors = projection_errors(vertices, faces, sources, extrinsics, intrinsics)
     errors = initial_errors
     rounds = []
@@ -89,7 +93,8 @@ def refine_projective_uv(vertices, faces, sources, extrinsics, intrinsics,
             }
             return vertices, faces, sources, report
         if iteration == max_iterations:
-            raise ValueError('Projective UV refinement did not reach its pixel tolerance')
+            raise UVRefinementLimit(f'UV refinement iteration limit {max_iterations} reached with '
+                                    f'{float(errors.max()):.4g}px error; required tolerance is {tolerance}px')
         vertices, faces, sources = subdivide_marked_faces(vertices, faces, sources, bad)
         errors = projection_errors(vertices, faces, sources, extrinsics, intrinsics)
         round_info = {'iteration': iteration+1, 'triangles': len(faces),
@@ -98,4 +103,4 @@ def refine_projective_uv(vertices, faces, sources, extrinsics, intrinsics,
         rounds.append(round_info)
         print('UV_REFINEMENT', json.dumps(round_info), flush=True)
         if len(faces) > max_faces:
-            raise ValueError('Projective UV refinement exceeded its explicit face limit')
+            raise UVRefinementLimit(f'UV refinement produced {len(faces)} faces; face limit is {max_faces}')

@@ -4,7 +4,7 @@
 
 # Codex 视觉重建工作台
 
-可编辑物理世界原型现已提供：对象级场景记录、Blender 构建、MuJoCo 刚体仿真，以及可供 Agent 调用的编辑、检查和发布工具。安装、合成示例与能力边界见[物理世界说明](docs/physical-world.md)。 已知相机的真实图像重建、纹理与留出视角评价见[多视角重建说明](docs/multiview-reconstruction.md)。
+可编辑物理世界原型现已提供：对象级场景记录、Blender 构建、MuJoCo 刚体仿真，以及可供 Agent 调用的编辑、检查和发布工具。安装、合成示例与能力边界见[物理世界说明](docs/physical-world.md)。 已知相机的真实图像重建、纹理与留出视角评价见[多视角重建说明](docs/multiview-reconstruction.md)。计划 Agent、SAM 3 物体分割、逐物体几何及建模审核闭环见[物体重建流程与框架图](docs/object-reconstruction.md)。
 
 默认模式下，在参考图片和当前 3D 场景上圈画，写一段提示，点击「发送反馈」。工作台把文字、原图、标注图和场景快照作为**工作台所管理的同一条 Codex 会话中的用户消息**送出；Codex 修改项目并发布 GLB 后，结果回到这个页面。你不需要去终端再触发一次读取。已有 Codex 桌面任务也可以通过下文的外部 MCP 模式使用同一套审图界面。
 

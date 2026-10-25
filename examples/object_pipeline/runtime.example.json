@@ -1,0 +1,23 @@
+{
+  "planner": {
+    "codex": "codex",
+    "model": "gpt-6-astra",
+    "effort": "high"
+  },
+  "reviewer": {
+    "codex": "codex",
+    "model": "gpt-6.1-sol"
+  },
+  "segmentation_command": [
+    "/path/to/sam3-env/bin/python", "{repo}/scripts/sam3_segment.py",
+    "--project", "{project}", "--plan", "{plan}", "--output", "{output}",
+    "--checkpoint", "/path/to/sam3.pt"
+  ],
+  "geometry_command": [
+    "/path/to/da3-env/bin/python", "{repo}/scripts/reconstruct_objects.py",
+    "--project", "{project}", "--plan", "{plan}", "--segments", "{segments}", "--output", "{output}"
+  ],
+  "blender": "blender",
+  "planner_timeout": 1800,
+  "tool_timeout": 3600
+}

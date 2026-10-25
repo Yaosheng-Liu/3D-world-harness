@@ -15,7 +15,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from reconstruction_review import (REVIEW_SCHEMA, freeze_candidate, project_file, read_json,
+from reconstruction_review import (REVIEW_SCHEMA, PLANNED_REVIEW_SCHEMA, freeze_candidate, project_file, read_json,
                                    validate_review, verify_files, write_json)
 from world_model import WorldStore
 
@@ -58,16 +58,25 @@ class Workbench:
 
 def review_prompt(project, frozen, previous):
     manifest = read_json(frozen / "candidate.json")
+    planned = ""
+    if manifest.get("plan_path"):
+        planned = f"""
+This candidate belongs to the object-planning workflow. Read the frozen plan ({manifest['plan_path']}), segments ({manifest['segments_path']}), geometry ({manifest['geometry_path']}) and inventory check ({manifest['inventory_path']}). The plan is a hypothesis, not ground truth. Independently inspect EVERY original training view in source_observations of candidate.json, including areas not mentioned by the planner. Attached source contact sheets cover all frames; open full-resolution original images for small objects, uncertain boundaries and any possible omission. Do not claim a source view was inspected merely because its ID is listed. Recheck excluded_objects against their cited evidence. Inspect observed geometry versus estimated completion and masks versus object texture ownership. A SAM miss must never silently remove an object from acceptance.
+Every issue additionally has target: planning for missing objects, incorrect identity, hierarchy or split granularity; segmentation for mask/association/ownership errors; modeling for shape, materials, pivots or editable-source defects. Use a planned object ID even if it is missing from the candidate. Use object_id='scene' for a newly discovered object outside the plan, citing its exact source_<frame_index> view and region. Actual candidate IDs are also valid. Inspect wall/floor residues and duplicated object textures after hiding or moving an object. Check planned object hierarchy, masks, fused fragments, and model completeness independently. A high image metric cannot waive inventory failures.
+The object inspection contact sheets show BEFORE and HIDDEN renders for each planned object, with its ID and selected view. Inspect every pair for leftover texture/geometry, wrongly disappearing neighbors and exposed holes; open the individual full images listed in editability.json when needed. Camera selection uses projected bounds, not guaranteed visibility. If occlusion prevents a meaningful check, request a better source-bound inspection view; a rendered pair alone does not prove correct separation.
+Acceptance requires all fixed render view IDs AND all source_view_ids in reviewed_views, and all actual candidate object IDs plus all non-group planned IDs in checked_objects. Do not list unchecked IDs simply to satisfy this gate.
+"""
     return f"""You are the independent visual reconstruction critic, not the modeler.
 User goal: convincingly reconstruct this real scene, with complete individually editable objects. Physics is DEFERRED.
 Read-only task: do not modify any files, run modeling scripts, publish, or call any write-capable service. Output only the review JSON matching the schema.
 Project: {project}
 Frozen candidate: {frozen / 'candidate.json'}
 Candidate ID: {manifest['candidate_id']}
-Read scene.json, build.json, editability.json, metrics.json and inspection.json in {frozen}. The attached comparison images show reference, PURE render, overlay, error, in that order. Judge the pure render, never the reference overlay. Actually inspect every attached image and additional source/crop views using image viewing tools. All six existing evaluation views have already been seen; they are regression views, not blind ground truth.
-Check every object: silhouette, completeness, support/occlusion, texture seams, missing surfaces, neighboring objects accidentally merged, duplicated remnants after separation, meaningful pivots and parent hierarchy. Test report proves transform isolation only, not semantic segmentation. Unobserved backs may be explicitly estimated; visible large defects or a generic box substituted for detailed furniture fail. A phototextured triangle soup or camera-facing photo planes do not satisfy the goal. Full-frame PSNR is diagnostic, never sufficient for acceptance.
-Appearance, structure and editability must ALL pass for accepted. Unknown or uncertain quality is revise/blocked. Review cannot waive deterministic check failures. Be strict but evidence-based; don't invent unseen real geometry. Scope is the real visible furniture showroom, not only its main bed. The main bed must contain separately editable frame/headboard/mattress/pillows/cover and nearby tables/walls/floor must not move with it.
-Issue IDs are stable across rounds. Every issue gives a real object_id and view_id from the candidate, normalized [x0,y0,x1,y1] region, specific visual evidence and a reproducible acceptance criterion. Keep strongest blocking issues actionable; do not use vague 'improve realism' comments. Include all actually reviewed fixed view IDs and checked object IDs. Previous review to recheck: {previous or 'none'}. Every prior issue must either remain with its ID or appear in resolved_issue_ids, with no silent dropping. Do not trust the modeler's self-assessment.\n"""
+Read scene.json, build.json, editability.json, metrics.json and inspection.json in {frozen}. The attached comparison images show reference, PURE render, overlay, error, in that order. Judge the pure render, never the reference overlay. Actually inspect every attached image and additional source/crop views using image viewing tools. Fixed evaluation views may already have been seen during modeling; do not describe them as blind ground truth.
+Check every object: silhouette, completeness, support/occlusion, texture seams, missing surfaces, neighboring objects accidentally merged, duplicated remnants after separation, meaningful pivots and parent hierarchy. Test report proves transform isolation only, not semantic segmentation. Unobserved backs may be explicitly estimated; visible large defects or a generic box substituted for a detailed source object fail. A phototextured triangle soup or camera-facing photo planes do not satisfy the goal. Full-frame PSNR is diagnostic, never sufficient for acceptance.
+Appearance, structure and editability must ALL pass for accepted. Unknown or uncertain quality is revise/blocked. Review cannot waive deterministic check failures. Be strict but evidence-based; don't invent unseen real geometry. Scope is the complete visible input scene. Identify each independently editable object and its meaningful parts from the original references; adjacent objects and scene structure must not move with it.
+{planned}
+Issue IDs are stable across rounds. Every issue gives an object_id and view_id bound to this candidate's manifest, normalized [x0,y0,x1,y1] region, specific visual evidence and a reproducible acceptance criterion. Keep strongest blocking issues actionable; do not use vague 'improve realism' comments. Include all actually reviewed fixed view IDs and checked object IDs. Previous review to recheck: {previous or 'none'}. Every prior issue must either remain with its ID or appear in resolved_issue_ids, with no silent dropping. Do not trust the modeler's self-assessment.\n"""
 
 
 def run(options):
@@ -99,7 +108,7 @@ def run(options):
             print(json.dumps({"stage": stage, "round": status["round"], **fields}, ensure_ascii=False), flush=True)
 
         candidate_path, receipt_path = options.candidate, options.receipt
-        feedback_id, previous = options.feedback_id, None
+        feedback_id, previous = options.feedback_id, getattr(options, "previous_review", None)
         try:
             for number in range(1, options.max_rounds + 1):
                 update("modeling", round=number, feedback_id=feedback_id)
@@ -108,20 +117,25 @@ def run(options):
                 update("checking")
                 frozen = run_dir / f"round_{number:02d}"
                 manifest = freeze_candidate(project, candidate_path, receipt_path, frozen, blender=options.blender,
-                                            previous_review=previous)
+                                            previous_review=previous, plan_path=getattr(options, "plan", None),
+                                            segments_path=getattr(options, "segments", None), geometry_path=getattr(options, "geometry", None))
                 update("reviewing", candidate_id=manifest["candidate_id"], checks=manifest["checks"],
                        object_count=len(manifest["object_ids"]), review_directory=str(frozen.relative_to(project)),
-                       views=read_json(frozen / "scene.json")["views"])
+                       views=read_json(frozen / "scene.json")["views"] + [
+                           {"id": row["view_id"], "reference_only": True} for row in manifest.get("source_observations", [])])
                 schema = frozen / "review_schema.json"
-                write_json(schema, REVIEW_SCHEMA)
-                prompt = review_prompt(project, frozen, previous)
+                write_json(schema, PLANNED_REVIEW_SCHEMA if manifest.get("plan_path") else REVIEW_SCHEMA)
+                frozen_previous = project_file(project, manifest["previous_review_path"]) if manifest["previous_review_path"] else None
+                prompt = review_prompt(project, frozen, frozen_previous)
                 (frozen / "review_prompt.txt").write_text(prompt)
                 command = [options.codex, "exec", "-C", str(project), "--skip-git-repo-check", "-s", "read-only",
                            "-c", 'approval_policy="never"', "-m", options.review_model,
                            "-c", 'model_reasoning_effort="ultra"', "--json", "--output-schema", str(schema),
                            "--output-last-message", str(frozen / "review.json")]
                 inspection = read_json(frozen / "inspection.json")
-                for path in inspection.get("inspection_paths", []):
+                edit_check = read_json(frozen / "editability.json")
+                for path in (inspection.get("inspection_paths", []) + manifest.get("source_inspection_paths", [])
+                             + edit_check.get("inspection_paths", [])):
                     command.extend(["--image", str(project_file(project, path))])
                 for name in ("edit_before.png", "edit_after.png"):
                     command.extend(["--image", str(frozen / name)])
@@ -136,8 +150,9 @@ def run(options):
                     raise RuntimeError(f"critic failed ({result.returncode}); inspect {frozen / 'review_events.jsonl'}")
                 verify_files(project, manifest["files"])
                 review = read_json(frozen / "review.json")
-                accepted = validate_review(manifest, review, read_json(previous) if previous else None)
-                update("reviewed", summary=review["summary"], dimensions=review["dimensions"], issues=review["issues"])
+                accepted = validate_review(manifest, review, read_json(frozen_previous) if frozen_previous else None)
+                update("reviewed", summary=review["summary"], dimensions=review["dimensions"], issues=review["issues"],
+                       review_path=str((frozen / "review.json").relative_to(project)))
                 if accepted:
                     update("publishing")
                     result = workbench.call("/api/workspace/reconstruction/accept", {
@@ -147,10 +162,11 @@ def run(options):
                     })
                     write_json(frozen / "publication.json", result)
                     update("accepted", accepted=True, world_revision=result["world_revision"], scene_revision=result["scene"]["revision"])
-                    return
-                if review["verdict"] == "blocked" or number == options.max_rounds:
+                    return status
+                if review["verdict"] == "blocked" or number == options.max_rounds or any(
+                        issue.get("target") in {"planning", "segmentation"} for issue in review["issues"]):
                     update("needs_revision", reason="审核未通过；需处理证据或调整建模方法后开启下一轮。")
-                    return
+                    return status
                 previous = frozen / "review.json"
                 next_dir = Path(candidate_path).parent / f"repair_{number + 1:02d}"
                 candidate_path, receipt_path = str(next_dir / "candidate.json"), str(next_dir / "build_receipt.json")
@@ -168,6 +184,10 @@ def main():
     parser.add_argument("--url", required=True)
     parser.add_argument("--candidate", required=True)
     parser.add_argument("--receipt", required=True)
+    parser.add_argument("--plan", help="Project-relative object inventory; requires --segments and --geometry")
+    parser.add_argument("--segments", help="Segmentation manifest bound to the plan")
+    parser.add_argument("--geometry", help="Per-object geometry manifest bound to the plan and masks")
+    parser.add_argument("--previous-review", help="Carry previous issue IDs across controller runs")
     parser.add_argument("--feedback-id", help="Wait for this already submitted builder task before freezing")
     parser.add_argument("--codex", default="codex")
     parser.add_argument("--blender", default="blender")

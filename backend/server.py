@@ -33,6 +33,7 @@ from human_pose import HumanPoseJobs, prepare_pose_edit_feedback
 from world_service import WORLD_TOOL_MAP, WorldService
 from cycles_preview import published_build, render_preview
 from reconstruction_review import accept_candidate, review_status, review_image
+from reconstruction_plan import planning_status, planning_image
 from world_editor import editor_state, edit_transform
 
 
@@ -587,7 +588,23 @@ def _make_server_unlocked(
                 self._require_browser_capability()
                 return self._send_json(200, render_preview(project_root, store, self._read_json()))
             if self.command == "GET" and path == "/api/workspace/reconstruction":
-                return self._send_json(200, review_status(project_root))
+                return self._send_json(200, {**review_status(project_root), "planning": planning_status(project_root)})
+            if self.command == "GET" and path == "/api/workspace/object-plan/image":
+                try:
+                    result = planning_image(project_root, query.get("object_id", [""])[0],
+                                            query.get("view_id", [""])[0], query.get("kind", [""])[0])
+                    if isinstance(result, Path):
+                        return self._send_file(result)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(result)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    self.wfile.write(result)
+                    return
+                except (ValueError, FileNotFoundError, KeyError) as exc:
+                    raise APIError(409, str(exc)) from exc
             if self.command == "GET" and path == "/api/workspace/reconstruction/image":
                 try:
                     return self._send_file(review_image(project_root, query.get("view_id", [""])[0], query.get("kind", [""])[0]))
