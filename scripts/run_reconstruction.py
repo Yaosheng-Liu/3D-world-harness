@@ -183,6 +183,7 @@ def initialize(project, run_dir, round_dir, runtime, status, update, stop_after)
 
 
 def run(options):
+    feedback_stop = options.stop_after == "feedback-modeling"
     project = options.project.resolve(strict=True)
     runtime = read_json(options.runtime)
     observations(project)
@@ -192,6 +193,8 @@ def run(options):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if options.resume:
             status = read_json(project_file(project, Path("object_pipeline") / options.resume / "status.json"))
+            if feedback_stop and status.get("feedback_modeling_finished"):
+                return status
             if status.get("accepted"):
                 raise ValueError("this run has already been accepted; start a new run for new work")
             run_dir = project / "object_pipeline" / options.resume
@@ -278,8 +281,17 @@ def run(options):
                         "candidate_path": candidate, "modeling_report_path": report_path, "message": str(exc)})
                     update("needs_revision", builder_diagnostic_path=str(diagnostic.relative_to(project)),
                            checked_feedback_id=feedback_id, reason="建模处理报告格式不完整，已保存返工诊断。")
+                    if feedback_stop and status.get("feedback_stop_review_path"):
+                        update("needs_revision", feedback_modeling_finished=True,
+                               reason="反馈建模已结束；处理报告需修正，按本轮限制停止，不再审核或派单。")
+                        return status
                     resume_pending = False
                     continue
+                if feedback_stop and status.get("feedback_stop_review_path"):
+                    update("modeled", feedback_modeling_finished=True,
+                           reason="已完成一次审核后的反馈建模；按用户要求停止，最终候选尚未复核或发布。",
+                           completed_stages=["planning", "segmenting", "geometry", "modeling"])
+                    return status
                 update("reviewing", builder_diagnostic_path=None,
                        completed_stages=["planning", "segmenting", "geometry", "modeling"])
                 role = runtime["reviewer"]
@@ -293,13 +305,15 @@ def run(options):
                 previous_review = str(Path(reviewed["review_directory"]) / "review.json")
                 update("reviewing", previous_review=previous_review, review_run_id=reviewed["run_id"],
                        reviewed_feedback_id=feedback_id, checked_feedback_id=feedback_id)
+                if feedback_stop:
+                    update("reviewing", feedback_stop_review_path=previous_review)
                 resume_pending = False
                 if reviewed["accepted"]:
                     update("accepted", accepted=True, summary=reviewed["summary"],
                            completed_stages=["planning", "segmenting", "geometry", "modeling", "reviewing", "publishing"])
                     return status
                 feedback = read_json(project_file(project, previous_review))
-                if feedback["verdict"] == "blocked":
+                if feedback["verdict"] == "blocked" and not feedback_stop:
                     break
             reason = ("建模处理报告需要修正；返工诊断已保存，可显式续跑。" if status.get("builder_diagnostic_path")
                       else "本轮审核未通过；问题与物体证据已保存，可显式续跑。")
@@ -317,7 +331,8 @@ def main():
     parser.add_argument("--project", type=Path, required=True)
     parser.add_argument("--runtime", type=Path, required=True, help="Local runtime JSON with explicit commands and Codex roles")
     parser.add_argument("--url", help="Project's existing workbench URL; required after geometry")
-    parser.add_argument("--stop-after", choices=("plan", "segment", "geometry", "review"), default="review")
+    parser.add_argument("--stop-after", choices=("plan", "segment", "geometry", "review", "feedback-modeling"), default="review",
+                        help="feedback-modeling runs at most one review, then stops after its modeling feedback is handled")
     parser.add_argument("--max-rounds", type=int, choices=range(1, 4), default=3)
     parser.add_argument("--resume", help="Continue a saved run, preserving object IDs and prior issues, in a new round")
     run(parser.parse_args())

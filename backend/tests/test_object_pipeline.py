@@ -450,6 +450,36 @@ class ObjectPipelineTests(unittest.TestCase):
         self.assertEqual(second["feedback_id"], "feedback-1")
         self.assertEqual(self.review_calls[0].candidate, first["candidate_path"])
 
+    def test_one_review_then_feedback_model_stops_and_normal_resume_reviews_same_candidate(self):
+        self.reviews = [{"verdict": "revise", "issues": [{"id": "shape", "category": "geometry"}], "resolved_issue_ids": []}]
+        status = self.execute(max_rounds=3, stop_after="feedback-modeling")
+        self.assertEqual(status["stage"], "modeled")
+        self.assertFalse(status["accepted"])
+        self.assertEqual((len(self.build_calls), len(self.review_calls), len(self.plan_calls)), (2, 1, 1))
+        self.assertIn(status["previous_review"], self.build_calls[-1]["prompt"])
+        again = self.execute(resume=status["run_id"], stop_after="feedback-modeling", max_rounds=3)
+        self.assertEqual(again["stage"], "modeled")
+        self.assertEqual((len(self.build_calls), len(self.review_calls)), (2, 1))
+        self.execute(resume=status["run_id"])
+        self.assertEqual((len(self.build_calls), len(self.review_calls)), (2, 2))
+
+    def test_one_review_limit_survives_resume_before_feedback_modeling(self):
+        self.reviews = [{"verdict": "blocked", "issues": [], "resolved_issue_ids": []}]
+        first = self.execute(max_rounds=1, stop_after="feedback-modeling")
+        self.assertEqual(len(self.review_calls), 1)
+        second = self.execute(resume=first["run_id"], max_rounds=3, stop_after="feedback-modeling")
+        self.assertEqual(second["stage"], "modeled")
+        self.assertEqual((len(self.build_calls), len(self.review_calls)), (2, 1))
+
+    def test_bad_feedback_report_does_not_dispatch_a_third_modeling_task(self):
+        self.reviews = [{"verdict": "revise", "issues": [], "resolved_issue_ids": []}]
+        self.report_modes = ["valid", "missing"]
+        status = self.execute(max_rounds=3, stop_after="feedback-modeling")
+        self.assertEqual(status["stage"], "needs_revision")
+        self.assertTrue(status["feedback_modeling_finished"])
+        self.execute(resume=status["run_id"], max_rounds=3, stop_after="feedback-modeling")
+        self.assertEqual((len(self.build_calls), len(self.review_calls)), (2, 1))
+
     def test_unknown_submission_delivery_stops_instead_of_duplicating_work(self):
         self.lose_builder_response = True
         with self.assertRaisesRegex(RuntimeError, "submission response lost"):

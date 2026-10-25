@@ -8,6 +8,7 @@ const planningStages = {
   planned:'初始化计划已生成，等待分割', segmented:'初始分割结束，等待几何融合',
   planning:'初始化：计划 Agent 拆解场景', segmenting:'初始化：分割与核对物体', geometry:'初始化：融合观测几何',
   ready_for_modeling:'初始证据可用，等待精细建模', modeling:'逐物体精细建模中', reviewing:'审核物体还原',
+  modeled:'反馈建模已完成，待下次复核',
   repairing:'建模 Agent 准备返工',
   needs_revision:'待建模 Agent 返工', accepted:'建模审核已通过并发布', failed:'物体流程中断', interrupted:'物体流程已停止'
 };
@@ -216,7 +217,7 @@ export function createReconstructionWorkflow({api, resourceURL, loadScene, focus
     const displayStage = planStage || status.stage;
     const currentStep = ['failed','interrupted'].includes(displayStage) ? null : ({
       planning:'initialization',planned:'initialization',segmenting:'initialization',segmented:'initialization',geometry:'initialization',
-      repairing:'modeling',needs_revision:'modeling',ready_for_modeling:'modeling',reviewed:'reviewing',edited:'reviewing',publishing:'accepted'
+      repairing:'modeling',needs_revision:'modeling',ready_for_modeling:'modeling',modeled:'modeling',reviewed:'reviewing',edited:'reviewing',publishing:'accepted'
     })[displayStage] || displayStage;
     const completed = new Set(plan?.completed_stages || []);
     if (['planning','segmenting','geometry'].every(stage => completed.has(stage))) completed.add('initialization');
