@@ -165,6 +165,20 @@ class ReviewGateTests(unittest.TestCase):
         issue.update(region=[0,0,1,1], object_id="imaginary")
         with self.assertRaises(ValueError): validate_review(self.manifest, review)
 
+    def test_cumulative_resolutions_must_be_known_and_cannot_hide_open_issues(self):
+        issue = {"id": "bed-back", "object_id": "bed", "view_id": "back", "region": [.1,.1,.8,.8],
+                 "severity": "major", "evidence": "missing back", "acceptance_criterion": "complete back"}
+        previous = {**review_fixture(), "verdict": "revise", "issues": [issue], "resolved_issue_ids": ["older-fix"]}
+        resolved = {**review_fixture(), "resolved_issue_ids": ["older-fix", "bed-back"]}
+        self.assertTrue(validate_review(self.manifest, resolved, previous))
+        retained = {**review_fixture(), "verdict": "revise", "issues": [issue], "resolved_issue_ids": ["older-fix"]}
+        self.assertFalse(validate_review(self.manifest, retained, previous))
+        with self.assertRaisesRegex(ValueError, "unknown issue IDs"):
+            validate_review(self.manifest, {**resolved, "resolved_issue_ids": ["bed-back", "invented"]}, previous)
+        with self.assertRaisesRegex(ValueError, "both open and resolved"):
+            validate_review(self.manifest, {**retained, "resolved_issue_ids": ["bed-back"]}, previous)
+        with self.assertRaisesRegex(ValueError, "every previous issue"):
+            validate_review(self.manifest, {**review_fixture(), "resolved_issue_ids": ["older-fix"]}, previous)
     def test_changed_source_and_outside_project_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp); source = project / "mesh.obj"; source.write_text("mesh")

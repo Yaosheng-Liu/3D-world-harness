@@ -310,8 +310,13 @@ def validate_review(manifest, review, previous=None):
             raise ValueError("issue region must have positive width and height")
     old = {issue["id"] for issue in (previous or {}).get("issues", [])}
     resolved = set(review["resolved_issue_ids"])
-    if not resolved <= old or resolved & set(ids) or not old <= resolved | set(ids):
-        raise ValueError("every previous issue must be rechecked, resolved or retained")
+    known = old | set((previous or {}).get("resolved_issue_ids", []))
+    if resolved - known:
+        raise ValueError(f"resolved_issue_ids contains unknown issue IDs: {sorted(resolved - known)}")
+    if resolved & set(ids):
+        raise ValueError(f"issues cannot be both open and resolved: {sorted(resolved & set(ids))}")
+    if old - (resolved | set(ids)):
+        raise ValueError(f"every previous issue must be rechecked, resolved or retained: {sorted(old - (resolved | set(ids)))}")
     accepted = review["verdict"] == "accepted"
     if accepted and (not all(manifest["checks"].values())
                      or any(review["dimensions"][key] != "passed" for key in DIMENSIONS)
