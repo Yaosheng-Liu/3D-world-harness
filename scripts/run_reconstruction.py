@@ -25,7 +25,7 @@ from reconstruction_plan import (PLAN_SCHEMA, MODEL_REPORT_SCHEMA, observations,
                                  ModelingReportError, read_modeling_report, validate_modeling_report)
 from world_build import file_hash
 from world_model import WorldStore, scene_hash
-from review_reconstruction import Workbench, run as review_candidate
+from review_reconstruction import Workbench, builder_role, run as review_candidate
 
 
 def now():
@@ -232,7 +232,10 @@ def run(options):
                       "physics": "deferred", "round": 0}
             if getattr(options, "repair_from", None):
                 source = read_json(project_file(project, Path("object_pipeline") / options.repair_from / "status.json"))
-                if source["stage"] != "modeled" or source.get("accepted"):
+                completed_repair = (source["stage"] == "failed" and source.get("repairs_completed", 0) > 0
+                                    and source.get("pending_review") and source.get("feedback_id")
+                                    and source.get("checked_feedback_id") == source["feedback_id"])
+                if (source["stage"] != "modeled" and not completed_repair) or source.get("accepted"):
                     raise ValueError("--repair-from requires a stopped, unpublished modeled candidate")
                 for key in ("base_world_revision", "base_world_hash", "plan_path", "segments_path", "geometry_path",
                             "candidate_path", "receipt_path", "previous_review", "completed_stages"):
@@ -252,6 +255,8 @@ def run(options):
 
         previous_review = status.get("previous_review")
         try:
+            if options.url:
+                status["builder"] = builder_role(Workbench(options.url).call("/api/workspace/state"))
             if scene_hash(WorldStore(project).read()) != status["base_world_hash"]:
                 raise ValueError("published world changed; start a new run from the current revision")
             rounds = repair_limit - status["repairs_completed"] if repair_limit else options.max_rounds

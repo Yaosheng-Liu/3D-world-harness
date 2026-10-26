@@ -21,6 +21,13 @@ from reconstruction_review import (freeze_candidate, project_file, read_json, re
 from world_model import WorldStore
 
 
+def builder_role(state):
+    settings = state["model_settings"]
+    if settings["model"] != "gpt-6-astra":
+        raise ValueError("builder must remain gpt-6-astra")
+    return {"model": settings["model"], "effort": settings["reasoning_effort"]}
+
+
 class Workbench:
     def __init__(self, url):
         self.url = url.rstrip("/")
@@ -67,8 +74,7 @@ class Workbench:
 
     def repair(self, note, key):
         state = self.call("/api/workspace/state")
-        if state["model_settings"] != {"model": "gpt-6-astra", "reasoning_effort": "high"}:
-            raise RuntimeError("builder must remain gpt-6-astra / high")
+        builder_role(state)
         if state["agent"]["status"] != "idle" or state["approvals"]:
             raise RuntimeError("finish the current workbench task before scheduling repairs")
         return self.call(f"/api/sessions/{state['session_id']}/feedback", {
@@ -109,8 +115,7 @@ def run(options):
     current = workbench.call("/api/workspace/state")
     if Path(current["project_dir"]).resolve() != project:
         raise ValueError("workbench URL belongs to another project")
-    if current["model_settings"] != {"model": "gpt-6-astra", "reasoning_effort": "high"}:
-        raise ValueError("builder must be Astra High")
+    builder = builder_role(current)
     directory = project / "reconstruction"
     directory.mkdir(exist_ok=True)
     with (directory / ".run.lock").open("w") as lock:
@@ -118,7 +123,7 @@ def run(options):
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
         run_dir = directory / run_id
         run_dir.mkdir()
-        status = {"run_id": run_id, "builder": {"model": "gpt-6-astra", "effort": "high", "thread_id": current["thread_id"]},
+        status = {"run_id": run_id, "builder": {**builder, "thread_id": current["thread_id"]},
                   "reviewer": {"model": options.review_model, "effort": "ultra", "requested_model": options.requested_review_model},
                   "base_world_revision": world["revision"], "base_scene_revision": current["scene_revision"],
                   "physics": "deferred", "accepted": False, "round": 1, "max_rounds": options.max_rounds,

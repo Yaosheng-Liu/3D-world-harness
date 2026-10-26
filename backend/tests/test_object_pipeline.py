@@ -28,6 +28,7 @@ class ObjectPipelineTests(unittest.TestCase):
         self.world = {"revision": 3, "objects": []}
         self.plan_calls, self.tool_calls, self.build_calls, self.review_calls = [], [], [], []
         self.order = []
+        self.effort = "high"
         self.strategies = ["fuse"]
         self.missing = False
         self.geometry_status = None
@@ -53,7 +54,8 @@ class ObjectPipelineTests(unittest.TestCase):
             def __init__(self, url): self.url = url
             def call(self, path):
                 if path == "/api/workspace/state":
-                    return {"project_dir": str(outer.project), "session_id": "test-session"}
+                    return {"project_dir": str(outer.project), "session_id": "test-session",
+                            "model_settings": {"model": "gpt-6-astra", "reasoning_effort": outer.effort}}
                 if path == "/api/sessions/test-session/feedback":
                     return {"items": [] if outer.hide_queued_feedback else [
                         {"feedback_id": f"feedback-{i + 1}", "idempotency_key": row["key"], "note": row["prompt"]}
@@ -526,6 +528,35 @@ class ObjectPipelineTests(unittest.TestCase):
                 self.execute(resume=interrupted["run_id"])
             self.assertEqual(review.call_count, 1)
         self.assertEqual(self.order, [])
+
+    def test_ultra_batch_can_start_from_completed_repair_after_review_failure(self):
+        first = self.execute(max_rounds=2, stop_after="feedback-modeling")
+        real_review = self.review_worker
+
+        def fail_second(options):
+            if len(self.review_calls) == 2:
+                raise RuntimeError("review auth expired")
+            return real_review(options)
+
+        with patch.object(MODULE, "review_candidate", side_effect=fail_second):
+            with self.assertRaisesRegex(RuntimeError, "review auth expired"):
+                self.execute(repair_from=first["run_id"], repair_cycles=2)
+        failed = MODULE.read_json(self.project / "object_pipeline/status.json")
+        self.assertEqual(failed["repairs_completed"], 1)
+        self.effort = "ultra"
+        self.order.clear()
+        result = self.execute(repair_from=failed["run_id"], repair_cycles=2)
+        self.assertEqual(self.order, ["review", "repair", "review", "repair"])
+        self.assertEqual(result["builder"], {"model": "gpt-6-astra", "effort": "ultra"})
+        self.assertEqual(self.review_calls[-2].candidate, failed["candidate_path"])
+
+    def test_repair_from_rejects_unfinished_builder(self):
+        self.interrupt_builder = True
+        with self.assertRaises(KeyboardInterrupt):
+            self.execute()
+        source = MODULE.read_json(self.project / "object_pipeline/status.json")
+        with self.assertRaisesRegex(ValueError, "stopped, unpublished modeled candidate"):
+            self.execute(repair_from=source["run_id"], repair_cycles=2)
 
     def test_bad_feedback_report_does_not_dispatch_a_third_modeling_task(self):
         self.reviews = [{"verdict": "revise", "issues": [], "resolved_issue_ids": []}]

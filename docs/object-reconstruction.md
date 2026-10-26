@@ -46,6 +46,8 @@ python scripts/run_reconstruction.py \
 
 已有 `modeled` 候选需要追加两轮时，使用 `--repair-from RUN_ID --repair-cycles 2`（其余 project/runtime/url 参数相同）。它新建运行记录，复用原初始化证据，按“审核现有候选 → 返修 → 审核返修候选 → 返修”执行。两轮仅计本次新增审核，每轮都将反馈交给建模 Agent；即使审核通过也不发布。最终返修尚未复核，停下供用户查看。`--resume NEW_RUN_ID` 保留原次数与已提交的建模任务，已结束批次不会再派单；审核调用中断且结果未确认时明确停止，不自动多开一次审核。需要再追加工作时显式使用新的 `--repair-from`。
 
+建模 Agent 保持 Astra，推理强度使用工具台当前已验证的会话设置，运行及审核记录保存实际档位，不再固定 High。先在空闲工具台调整强度，再开启新批次；当前账号支持 Ultra 时可使用最高档。若上批返修已完成、仅其后的审核失败，也可显式从该候选新开批次，旧失败记录保持不变；未完成的建模不能作为此入口的起点。
+
 ```bash
 python scripts/run_reconstruction.py \
   --project /path/to/project --runtime /path/to/runtime.json \

@@ -31,7 +31,10 @@ class ReviewerRepairLoopTests(unittest.TestCase):
     def test_passing_review_can_return_without_publishing(self):
         self.exercise_repair_loop(publish=False)
 
-    def exercise_repair_loop(self, *, publish):
+    def test_ultra_builder_is_preserved_in_review_receipt(self):
+        self.exercise_repair_loop(publish=False, effort="ultra")
+
+    def exercise_repair_loop(self, *, publish, effort="high"):
         script = Path(__file__).resolve().parents[2] / "scripts/review_reconstruction.py"
         spec = importlib.util.spec_from_file_location("review_reconstruction_loop_test", script)
         module = importlib.util.module_from_spec(spec)
@@ -39,7 +42,7 @@ class ReviewerRepairLoopTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
             repairs, reviews, waited, publications = [], [], [], []
-            state = {"project_dir": str(project), "model_settings": {"model": "gpt-6-astra", "reasoning_effort": "high"},
+            state = {"project_dir": str(project), "model_settings": {"model": "gpt-6-astra", "reasoning_effort": effort},
                      "thread_id": "same-modeler-thread", "scene_revision": 1}
 
             class Workbench:
@@ -91,6 +94,7 @@ class ReviewerRepairLoopTests(unittest.TestCase):
                     patch.object(module, "freeze_candidate", side_effect=freeze), patch.object(module.subprocess, "run", side_effect=critic):
                 result = module.run(options)
             self.assertEqual(result["accepted"], publish)
+            self.assertEqual(result["builder"]["effort"], effort)
             self.assertEqual(len(publications), int(publish))
             if not publish:
                 self.assertTrue(result["review_passed"])
