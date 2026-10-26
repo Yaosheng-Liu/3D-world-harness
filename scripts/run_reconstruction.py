@@ -191,6 +191,7 @@ def review_current(project, options, runtime, status, *, publish):
         project=project, url=options.url, candidate=status["candidate_path"], receipt=status["receipt_path"],
         feedback_id=None, codex=role["codex"], blender=runtime.get("blender", "blender"),
         review_model=role["model"], requested_review_model="gpt-6.1-sol", max_rounds=1,
+        review_timeout=runtime.get("review_timeout", 2400),
         publish_after_review=publish, plan=status["plan_path"], segments=status["segments_path"],
         geometry=status["geometry_path"],
         modeling_report=str(Path(status["candidate_path"]).parent / "modeling_report.json"),

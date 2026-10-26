@@ -170,12 +170,17 @@ def run(options):
                 for name in ("edit_before.png", "edit_after.png"):
                     command.extend(["--image", str(frozen / name)])
                 command.append("-")
-                with (frozen / "review_events.jsonl").open("w") as events, (frozen / "review_stderr.log").open("w") as errors:
-                    result = subprocess.run(command, input=prompt, text=True, stdout=events, stderr=errors, timeout=2400)
-                # The critic has a fresh, separately persisted thread and no write approvals.
-                thread = next((json.loads(line)["thread_id"] for line in (frozen / "review_events.jsonl").read_text().splitlines()
-                               if json.loads(line).get("type") == "thread.started"), None)
-                status["reviewer"]["thread_id"] = thread
+                timeout = getattr(options, "review_timeout", 2400)
+                try:
+                    with (frozen / "review_events.jsonl").open("w") as events, (frozen / "review_stderr.log").open("w") as errors:
+                        result = subprocess.run(command, input=prompt, text=True, stdout=events, stderr=errors, timeout=timeout)
+                except subprocess.TimeoutExpired as exc:
+                    raise RuntimeError(f"critic timed out after {timeout}s; inspect {frozen / 'review_events.jsonl'}") from exc
+                finally:
+                    # Preserve the thread even on timeout so its unfinished review can be recovered.
+                    status["reviewer"]["thread_id"] = next((json.loads(line)["thread_id"]
+                        for line in (frozen / "review_events.jsonl").read_text().splitlines()
+                        if json.loads(line).get("type") == "thread.started"), None)
                 if result.returncode:
                     raise RuntimeError(f"critic failed ({result.returncode}); inspect {frozen / 'review_events.jsonl'}")
                 verify_files(project, manifest["files"])
@@ -233,6 +238,7 @@ def main():
     parser.add_argument("--blender", default="blender")
     parser.add_argument("--review-model", default="gpt-6.1-sol")
     parser.add_argument("--requested-review-model", default="gpt-6.1-sol")
+    parser.add_argument("--review-timeout", type=int, default=2400, help="Maximum seconds per critic invocation")
     parser.add_argument("--max-rounds", type=int, choices=range(1, 4), default=3)
     run(parser.parse_args())
 

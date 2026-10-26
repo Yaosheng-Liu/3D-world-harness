@@ -48,6 +48,8 @@ python scripts/run_reconstruction.py \
 
 建模 Agent 保持 Astra，推理强度使用工具台当前已验证的会话设置，运行及审核记录保存实际档位，不再固定 High。先在空闲工具台调整强度，再开启新批次；当前账号支持 Ultra 时可使用最高档。若上批返修已完成、仅其后的审核失败，也可显式从该候选新开批次，旧失败记录保持不变；未完成的建模不能作为此入口的起点。
 
+运行配置的 `review_timeout` 控制每次审核的最长执行秒数；未配置时保持2400秒，完整多物体 Ultra 审核的示例配置为14400秒。超时仍明确停止、不自动多开审核，并保存原审核线程ID及简短错误，便于核对冻结证据后恢复。
+
 ```bash
 python scripts/run_reconstruction.py \
   --project /path/to/project --runtime /path/to/runtime.json \

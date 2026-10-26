@@ -19,5 +19,6 @@
   ],
   "blender": "blender",
   "planner_timeout": 1800,
+  "review_timeout": 14400,
   "tool_timeout": 3600
 }

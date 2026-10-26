@@ -34,7 +34,10 @@ class ReviewerRepairLoopTests(unittest.TestCase):
     def test_ultra_builder_is_preserved_in_review_receipt(self):
         self.exercise_repair_loop(publish=False, effort="ultra")
 
-    def exercise_repair_loop(self, *, publish, effort="high"):
+    def test_timeout_preserves_thread_and_does_not_dispatch_repairs(self):
+        self.exercise_repair_loop(publish=False, timeout_failure=True)
+
+    def exercise_repair_loop(self, *, publish, effort="high", timeout_failure=False):
         script = Path(__file__).resolve().parents[2] / "scripts/review_reconstruction.py"
         spec = importlib.util.spec_from_file_location("review_reconstruction_loop_test", script)
         module = importlib.util.module_from_spec(spec)
@@ -73,6 +76,10 @@ class ReviewerRepairLoopTests(unittest.TestCase):
                 return manifest
 
             def critic(command, **kwargs):
+                self.assertEqual(kwargs["timeout"], 14400)
+                if timeout_failure:
+                    kwargs["stdout"].write('{"type":"thread.started","thread_id":"interrupted-critic"}\n')
+                    raise module.subprocess.TimeoutExpired(command, kwargs["timeout"])
                 path = Path(command[command.index("--output-last-message") + 1])
                 review = {**review_fixture(), "candidate_id": str(len(reviews))}
                 if not reviews:
@@ -89,9 +96,17 @@ class ReviewerRepairLoopTests(unittest.TestCase):
             options = SimpleNamespace(project=project, url="mock", candidate="candidate.json", receipt="receipt.json",
                 publish_after_review=publish,
                 feedback_id=None, previous_review=None, review_model="gpt-6.1-sol", requested_review_model="gpt-6.1-sol",
-                max_rounds=2, blender="mock", codex="mock", plan="plan.json", segments="segments.json", geometry="geometry.json")
+                max_rounds=2, review_timeout=14400, blender="mock", codex="mock", plan="plan.json", segments="segments.json", geometry="geometry.json")
             with patch.object(module, "Workbench", Workbench), patch.object(module.WorldStore, "read", return_value={"revision": 1}), \
                     patch.object(module, "freeze_candidate", side_effect=freeze), patch.object(module.subprocess, "run", side_effect=critic):
+                if timeout_failure:
+                    with self.assertRaisesRegex(RuntimeError, "critic timed out after 14400s"):
+                        module.run(options)
+                    status = json.loads((project / "reconstruction/status.json").read_text())
+                    self.assertEqual(status["stage"], "failed")
+                    self.assertEqual(status["reviewer"]["thread_id"], "interrupted-critic")
+                    self.assertFalse(repairs or publications)
+                    return
                 result = module.run(options)
             self.assertEqual(result["accepted"], publish)
             self.assertEqual(result["builder"]["effort"], effort)
