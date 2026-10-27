@@ -11,6 +11,7 @@ import { setupImmersive } from './immersive.js';
 import { setupTheme } from './theme.js';
 import {setupPromptAttachments} from './prompt-attachments.js';
 import {setupModelSettings} from './model-settings.js';
+import {setupApprovalSettings} from './approval-settings.js';
 import {setupWorkspaceSidebar} from './workspace-sidebar.js';
 import {setupWorkspaceFolderImport} from './workspace-folder-import.js';
 import {setupSnapshotGallery} from './snapshot-gallery.js';
@@ -38,6 +39,7 @@ import { compactReferenceMessage } from './prompt-reference-display.js';
 import { setupReferenceLivewire } from './livewire.js';
 
 let modelSettings = null;
+let approvalSettings = null;
 const id = (name) => document.getElementById(name);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const SNAPSHOT_ZOOM_MIN = .1, SNAPSHOT_ZOOM_MAX = 8;
@@ -1342,6 +1344,7 @@ function renderWorkspace(workspace) {
   state.queue = Array.isArray(workspace.queue) ? workspace.queue : [];
   state.approvals = Array.isArray(workspace.approvals) ? workspace.approvals : [];
   modelSettings?.update(workspace);
+  approvalSettings?.update(workspace);
   if (state.feedbackTransport === 'mcp_events') {
     renderEventWorkspace();
     return;
@@ -6404,6 +6407,7 @@ function bindEvents() {
   modelSettings=setupModelSettings({api,onWorkspace:renderWorkspace,
     isSubmitting:()=>state.submitting || !!state.pendingSubmission,
     onSaving:value=>{state.updatingModel=value;updateSubmitLabel();}});
+  approvalSettings=setupApprovalSettings({api,onWorkspace:renderWorkspace});
   workspaceSidebar=setupWorkspaceSidebar({onOpen:loadSidebarProjects,onPage:page=>{
     workspaceFolderImport?.onPage(page);
     if(page==='model') modelSettings?.open();

@@ -114,6 +114,13 @@ html:not([data-layout=immersive]) .scene-pane > .pane-head { min-height: 48px; }
 }
 
 /* Session model settings reuse the drawer's motion and theme. */
+.sidebar-approval { margin: 12px 20px 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.sidebar-approval[hidden] { display: none; }
+.sidebar-approval-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sidebar-approval label { font-size: 13px; }
+.sidebar-approval select { padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 12px; }
+.sidebar-approval p { margin: 7px 0 0; font-size: 11px; line-height: 1.6; color: var(--muted); }
+.sidebar-approval #approval-mode-status { color: var(--ink); }
 .session-model-current { display: grid; gap: 7px; padding: 14px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-hover); }
 .session-model-current strong { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .session-model-actions { display: flex; gap: 8px; margin-top: 12px; }
