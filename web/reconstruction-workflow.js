@@ -409,6 +409,7 @@ export function createReconstructionWorkflow({ api, resourceURL, loadScene, focu
         el('history-error').textContent = '该记录的图像无法读取，可能已被修改或移除。';
       };
       if (source) image.src = resourceURL(source.url);
+      image.closest('figure').querySelector('figcaption').textContent = source?.label || '';
     }
     for (const box of el('comparison').querySelectorAll('.flow-region')) {
       box.hidden = !region;

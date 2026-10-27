@@ -133,13 +133,14 @@ def modeling_prompt(project, status, candidate, receipt, previous_review=None):
 分割记录：{project / status['segments_path']}
 观测几何：{project / status['geometry_path']}
 上轮审核：{previous_review or '无'}
+审核目录inspection.json中的overlay_paths是同相机的原图/模型50%叠图；结合纯渲染和原图处理审核指出的重影、轮廓、部件位置、遮挡和纹理错位。叠图里的照片细节不代表模型已具备该细节，不能仅凭混合图验收。正式检查由审核Agent负责。
 按问题类别返工：先处理spatial_structure（空间结构错误），覆盖每个物体内部、部件之间及物体之间的关系，以相关对象/部件/表面及局部方向为参照，用有平移视差的多视角原图、遮挡和可信深度核对凹凸/内外、前后/朝向/厚度、连接/开口、穿插或悬空；曲面不强行套用墙面平面，证据中注明相关对象ID，不能只凭明暗或DA3/TSDF自证凹凸；先核对相机/坐标，证据不足标明不确定性，不能靠贴图或灯光掩盖结构错误。silhouette（轮廓错误）修几何/比例/褶皱；texture_alignment（纹理错位）修UV、来源视角与遮挡投影；lighting（光照偏差）修灯光及曝光，不能把阴影或高光画进底色补偿。appearance中的材质问题独立处理。先核对相机；原因不确定时按审核要求补诊断，不盲目同时修改几何、材质和灯光。每条反馈按其物体、视角、区域与验收条件处理，保留问题ID供审核复验。
 建模报告格式返工诊断（不是独立审核）：{report_diagnostic}
 前面的计划、SAM、DA3/TSDF都是初始化。你负责逐个物体精细建模，并负责所有审核返工，包括漏物体、错误拆分/实例对应、分割边界和几何缺口，不等待计划Agent或前处理替你解决。默认保留稳定ID；如原清单认错、需拆分/合并或调整层级，可依据原图纠正，在modeling_report.json中明确映射，不可静默删除。group只是任务分组，可省略无几何的group节点。不能把TSDF碎片或裁剪照片当作已完成模型；SAM漏检或几何超限的物体仍须按原图建模，必要时自己调用工具修正局部证据。未观测面标为estimated。限制纹理来源，不能把枕头/灯具烘焙到邻物体。
 按priority逐组建模。每完成一组有意义的物体（例如床架和床头、床品、两侧柜灯），就用build_world生成完整当前候选的Blender/GLB，render=False即可；随后用workspace_preview_world传入构建receipt.json、当前显示版本和简短完成说明，更新工具台。中间预览允许尚未建完，只展示实际完成的几何，不伪造其余部分；保持稳定ID，并在下一次预览保留已完成对象。预览不代表验收，不修改world/scene.json。
 你负责正常构建所需的基本有效性；正式的移动/旋转、隐藏残留、完整性和原图质量检查交给独立审核阶段，不重复执行整套验收。独立审核会核对原图、物体处理覆盖和旧问题。
 当前世界版本为{status['base_world_revision']}。输出完整候选 {candidate}，revision={status['base_world_revision']+1}；所有新脚本、资产放候选同目录。用build_world(scene=candidate,render=True)构建，将完整receipt写到{receipt}。保持原坐标、全部已有验证相机和原始来源。不要修改world/scene.json、已发布文件、计划/分割/几何证据、审核记录或仓库代码，不要发布。候选由独立审核通过后统一发布。
-另外输出候选同目录的modeling_report.json，严格遵循该目录modeling_report_schema.json。报告绑定初始plan文件SHA-256，objects逐项记录每个初始非group物体对应的scene_ids；regions逐项处理初始unexplained_regions的索引。resolution为modeled/excluded/unresolved，每条给reason和原始frame_indices依据。拆合可显式映射一对多/多对一；排除必须有证据，不能凭分割失败否认物体。报告只说明如何处理初始化，不代表你可以自行验收；所有问题由独立审核复验。原初始化与旧审核证据保持不变。
+另外输出候选同目录的modeling_report.json，严格遵循该目录modeling_report_schema.json。报告绑定初始plan文件SHA-256，objects逐项记录每个初始非group物体对应的scene_ids；regions逐项处理初始unexplained_regions的索引。resolution为modeled/excluded/unresolved，每条给reason和原始frame_indices依据。frame_indices只填写observations/manifest.json中不重复的train索引，并至少引用该初始物体或区域的一帧；其他审核视角可以在reason说明。拆合可显式映射一对多/多对一；排除必须有证据，不能凭分割失败否认物体。报告只说明如何处理初始化，不代表你可以自行验收；所有问题由独立审核复验。原初始化与旧审核证据保持不变。
 """
 
 

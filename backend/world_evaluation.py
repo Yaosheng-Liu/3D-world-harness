@@ -128,13 +128,19 @@ def write_view_inspection(project_dir, scene, build):
     if not output.is_relative_to(Path(build["build_dir"]).resolve()):
         raise WorldError("Evaluation output escapes the build directory")
     output.mkdir(exist_ok=True)
-    sheets = []
+    overlay_dir = _inspection_path(output, 'overlays')
+    overlay_dir.mkdir(exist_ok=True)
+    sheets, overlays = [], []
     for view_id, reference, rendered, error in panels:
         width, height = reference.size
         sheet = Image.new("RGB", (width * 4, height + 24), "white")
         draw = ImageDraw.Draw(sheet)
+        overlay = Image.blend(reference, rendered, 0.5)
+        overlay_path = _inspection_path(overlay_dir, f"{view_id}.png")
+        overlay.save(overlay_path)
+        overlays.append(str(overlay_path))
         for index, (label, panel) in enumerate((("Reference", reference), ("Render", rendered),
-                                               ("50% overlay", Image.blend(reference, rendered, 0.5)),
+                                               ("50% overlay", overlay),
                                                ("Absolute RGB error (no amplification)", error))):
             sheet.paste(panel, (index * width, 24))
             draw.text((index * width + 4, 4), label, fill="black")
@@ -142,5 +148,6 @@ def write_view_inspection(project_dir, scene, build):
         sheet.save(path)
         sheets.append(str(path))
     report["inspection_paths"] = sheets
+    report["overlay_paths"] = overlays
     _inspection_path(output, "summary.json").write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
     return report

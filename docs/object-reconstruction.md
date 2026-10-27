@@ -34,6 +34,8 @@
 
 ## 运行完整流程
 
+每轮审核在原有四联对比图之外，向审核 Agent 直接附上每个固定视角的独立原分辨率叠图：原图与候选渲染各占50%，保持相同相机和像素坐标，不进行图像配准或变形。`inspection.json` 的 `overlay_paths` 登记这些图，随候选冻结并校验哈希；工具台「程序检查」的图像选择器可回看。审核需逐视角检查重影、轮廓、部件位置、遮挡与纹理错位，并对照其他视角、原图和纯渲染给出具体返修目标。叠图包含真实照片像素，不能把照片细节当作模型质量，也不能仅凭叠图判断凹凸或灯光原因。本轮只增强叠图证据与审核要求，不新增自动几何评分。
+
 入口为 `scripts/run_reconstruction.py`，前置输入沿用[已知相机多视角流程](multiview-reconstruction.md)的 prepared 原图、DA3 深度与已初始化世界。先复制并填写 [runtime.example.json](../examples/object_pipeline/runtime.example.json) 中本机的执行程序和权重路径。计划和审核分别运行只读 Codex 会话；建模复用工具台当前 Astra High 会话。运行环境可为角色指定 `home`，控制器只在调用该角色时设置 `CODEX_HOME`。
 
 ```bash

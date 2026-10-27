@@ -144,6 +144,14 @@ def _catalog(project):
         check = add(path, "checking", f"审核批次 · 第 {number} 轮检查", run=directory.parent.name)
         check["summary"] = "检查冻结候选的构建、物体覆盖和可编辑性；程序通过不等同于视觉质量通过。"
         check["facts"] = [[key, "通过" if passed else "未通过"] for key, passed in manifest["checks"].items()]
+        inspection_path = directory / 'inspection.json'
+        if inspection_path.is_file():
+            name = str(inspection_path.relative_to(project))
+            verify_files(project, {name: manifest['files'][name]})
+            for image_path in read_json(inspection_path).get('overlay_paths', []):
+                relative = str(project_file(project, image_path).relative_to(project))
+                check['views'].append({'id': '叠图 · ' + Path(image_path).stem,
+                    'render': asset(check, image_path, '原图与模型各 50% · 同相机叠图', manifest['files'][relative])})
         for name, label in (("editability.json", "编辑检查报告"), ("metrics.json", "图像比较指标"), ("inventory.json", "物体覆盖报告")):
             report_path = directory / name
             if report_path.is_file():

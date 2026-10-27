@@ -124,11 +124,18 @@ class WorldEvaluationTests(unittest.TestCase):
             evaluate_views(self.project, changed, self.build)
 
     def test_export_writes_four_labelled_panels_and_json_only_when_requested(self):
+        Image.new('RGB', (2, 1), 'white').save(self.render)
+        self.bind()
         report = write_view_inspection(self.project, self.scene, self.build)
         self.assertEqual(len(report["inspection_paths"]), 1)
         path = Path(report["inspection_paths"][0])
         with Image.open(path) as image:
             self.assertEqual(image.size, (8, 25))
+        with Image.open(report['overlay_paths'][0]) as image:
+            self.assertEqual(image.size, (2, 1))
+            self.assertEqual([image.getpixel((x, 0)) for x in range(2)], [(127, 127, 127)] * 2)
+        self.assertEqual(digest(self.reference), self.build['asset_hashes']['reference.png'])
+        self.assertEqual(digest(self.render), self.build['files']['heldout.png'])
         saved = json.loads((self.output / "evaluation" / "summary.json").read_text())
         self.assertEqual(saved, report)
 
@@ -151,6 +158,14 @@ class WorldEvaluationTests(unittest.TestCase):
         outside.mkdir()
         (self.output / "evaluation").symlink_to(outside, target_is_directory=True)
         with self.assertRaisesRegex(WorldError, "escapes"):
+            write_view_inspection(self.project, self.scene, self.build)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_overlay_directory_cannot_escape_the_evidence_directory(self):
+        output = self.output / 'evaluation'; output.mkdir()
+        outside = self.project / 'unrelated'; outside.mkdir()
+        (output / 'overlays').symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(WorldError, 'escapes'):
             write_view_inspection(self.project, self.scene, self.build)
         self.assertEqual(list(outside.iterdir()), [])
 

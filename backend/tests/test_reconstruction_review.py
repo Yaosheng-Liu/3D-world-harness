@@ -71,12 +71,16 @@ class ReviewerRepairLoopTests(unittest.TestCase):
                     manifest["previous_review_path"] = str(manifest["previous_review_path"])
                 write_json(output / "candidate.json", manifest)
                 write_json(output / "scene.json", {"views": [{"id": key} for key in manifest["view_ids"]]})
-                write_json(output / "inspection.json", {"inspection_paths": []})
+                (output / 'overlay.png').write_bytes(b'test attachment')
+                write_json(output / "inspection.json", {"inspection_paths": [], 'overlay_paths': [str(output / 'overlay.png')]})
                 write_json(output / "editability.json", {"inspection_paths": []})
                 return manifest
 
             def critic(command, **kwargs):
                 self.assertEqual(kwargs["timeout"], 14400)
+                self.assertTrue(any(arg.endswith('/overlay.png') for arg in command))
+                self.assertIn('EVERY standalone overlay', kwargs['input'])
+                self.assertIn('PURE render separately', kwargs['input'])
                 if timeout_failure:
                     kwargs["stdout"].write('{"type":"thread.started","thread_id":"interrupted-critic"}\n')
                     raise module.subprocess.TimeoutExpired(command, kwargs["timeout"])

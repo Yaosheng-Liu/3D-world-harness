@@ -93,9 +93,12 @@ class HistoryTests(unittest.TestCase):
         base = "reconstruction/review-run/round_01"
         scene_path = str(self.write(base + "/scene.json", self.scene).relative_to(self.project))
         receipt_path = str(self.write(base + "/build.json", self.receipt).relative_to(self.project))
+        overlay = self.project / base / 'overlay.png'; overlay.write_bytes(b'frozen overlay')
+        inspection = str(self.write(base + '/inspection.json', {'overlay_paths': [str(overlay)]}).relative_to(self.project))
         self.write(base + "/candidate.json", {"candidate_id": "frozen", "scene_path": scene_path,
                    "receipt_path": receipt_path, "checks": {"editability": False},
-                   "files": {name: file_hash(self.project / name) for name in (scene_path, receipt_path)}})
+                   "files": {name: file_hash(self.project / name) for name in
+                             (scene_path, receipt_path, inspection, str(overlay.relative_to(self.project)))}})
         self.write(base + "/review.json", {"candidate_id": "frozen", "summary": "needs revision", "issues": [{"id": "shape"}],
                    "verdict": "revise", "dimensions": {"structure": "failed"}, "reviewed_views": ["front"],
                    "checked_objects": ["chair"], "resolved_issue_ids": []})
@@ -105,6 +108,12 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(review["issues"], [{"id": "shape"}])
         self.assertEqual(review["candidate_id"], "frozen")
         self.assertEqual(self.asset(review["views"][0]["render"]).read_bytes(), b"firstrenders/front.png")
+        check = next(e for e in result['entries'] if e['stage'] == 'checking')
+        self.assertEqual(self.asset(check['views'][0]['render']).read_bytes(), b'frozen overlay')
+        overlay.write_bytes(b'changed overlay')
+        with self.assertRaisesRegex(ValueError, 'changed'):
+            self.asset(check['views'][0]['render'])
+        overlay.write_bytes(b'frozen overlay')
         self.write(receipt_path, {**self.receipt, "scene_hash": "changed"})
         self.assertTrue(reconstruction_history(self.project)["errors"])
         with self.assertRaisesRegex(ValueError, "unknown"):

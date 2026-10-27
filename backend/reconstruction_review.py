@@ -262,7 +262,7 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
         files[str(path.relative_to(project))] = file_hash(path)
     for path in output.rglob("*.png"):
         files[str(path.relative_to(project))] = file_hash(path)
-    for path in (build_dir / "evaluation").glob("*.png"):
+    for path in (build_dir / "evaluation").rglob("*.png"):
         files[str(path.relative_to(project))] = file_hash(path)
     previous_path = None
     if previous_review:
