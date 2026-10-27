@@ -133,6 +133,11 @@ await refresh();window.ready=true;
                 # A different scene session has its own default; external connectors stay manual.
                 page.evaluate("settings.update({delivery_mode:'appserver',project_id:'project',session_id:'other',thread_id:'thread',approvals:[]})")
                 assert page.locator('#approval-mode').input_value() == 'manual'
+                page.evaluate("localStorage.setItem('harness:approval-mode:project:other','automatic');settings.update({delivery_mode:'appserver',project_id:'another-project',session_id:'other',thread_id:'thread',approvals:[]})")
+                assert page.locator('#approval-mode').input_value() == 'manual'
+                page.evaluate("settings.update({delivery_mode:'appserver',project_id:'project',session_id:'other',thread_id:'thread',approvals:[]})")
+                assert page.locator('#approval-mode').input_value() == 'automatic'
+                page.evaluate("settings.update({delivery_mode:'appserver',project_id:'another-project',session_id:'other',thread_id:'thread',approvals:[]})")
                 page.set_viewport_size({'width': 390, 'height': 650})
                 page.screenshot(path=str(args.output / 'manual-mobile.png'))
                 page.evaluate("settings.update({delivery_mode:'external',session_id:'other',approvals:[]})")
