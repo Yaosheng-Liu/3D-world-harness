@@ -4,6 +4,7 @@ export function setupApprovalSettings({api, onWorkspace}) {
   const select = document.getElementById('approval-mode');
   const status = document.getElementById('approval-mode-status');
   const kinds = new Set(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval']);
+  const modelingTools = new Set(['workspace_preview_world', 'workspace_inspect_world', 'workspace_build_world', 'workspace_evaluate_world']);
   let workspace = {}, key = '', running = false, message = '';
 
   function mode() { return key && localStorage.getItem(key) === 'automatic' ? 'automatic' : 'manual'; }
@@ -15,8 +16,13 @@ export function setupApprovalSettings({api, onWorkspace}) {
       : message || (mode() === 'automatic' ? '自动确认已开启；关闭页面后暂停。' : '每次操作由你点击允许或拒绝。');
   }
   function eligible(request, state) {
-    return kinds.has(request.kind) && !request.details_truncated &&
-      (!request.source_thread_id || request.source_thread_id === state.thread_id);
+    if (request.details_truncated || request.source_thread_id && request.source_thread_id !== state.thread_id) return false;
+    if (kinds.has(request.kind)) return true;
+    const details = request.details || {}, schema = details.requestedSchema;
+    const tool = details.message?.match(/^Allow the scene_feedback MCP server to run tool "([a-z_]+)"\?$/)?.[1];
+    return request.kind === 'mcpServer/elicitation/request' && details.serverName === 'scene_feedback' &&
+      details._meta?.codex_approval_kind === 'mcp_tool_call' && modelingTools.has(tool) && details.mode === 'form' &&
+      schema?.type === 'object' && Object.keys(schema.properties || {}).length === 0 && !schema.required?.length;
   }
   async function process() {
     if (running || panel.hidden || !navigator.locks || mode() !== 'automatic' ||

@@ -27,6 +27,11 @@ def main():
     def request(key, kind='item/commandExecution/requestApproval', **fields):
         return {'approval_id': key, 'kind': kind, 'source_thread_id': 'thread', **fields}
 
+    def tool_request(key, tool):
+        return request(key, 'mcpServer/elicitation/request', details={'serverName': 'scene_feedback', 'mode': 'form',
+            '_meta': {'codex_approval_kind': 'mcp_tool_call'}, 'requestedSchema': {'type': 'object', 'properties': {}},
+            'message': f'Allow the scene_feedback MCP server to run tool "{tool}"?'})
+
     with tempfile.TemporaryDirectory(prefix='approval-browser-') as temp:
         root = Path(temp)
         (root / 'web').symlink_to(ROOT / 'web', target_is_directory=True)
@@ -79,6 +84,8 @@ await refresh();window.ready=true;
                 page = context.new_page()
                 url = f'http://127.0.0.1:{server.server_port}/fixture.html'
                 state['approvals'] = [request('command'), request('file', 'item/fileChange/requestApproval'),
+                    tool_request('preview', 'workspace_preview_world'), tool_request('publish', 'workspace_publish_world'),
+                    request('form', 'mcpServer/elicitation/request', details={'mode': 'form', 'requestedSchema': {'type': 'object', 'properties': {}}}),
                     request('question', 'item/tool/requestUserInput'), request('permissions', 'item/permissions/requestApproval'),
                     request('large', details_truncated=True), request('other-thread', source_thread_id='other')]
                 page.goto(url)
@@ -87,7 +94,7 @@ await refresh();window.ready=true;
                 assert not posts
                 page.locator('#approval-mode').select_option('automatic')
                 page.wait_for_function("document.querySelector('#approval-mode-status').textContent.includes('最近一次')")
-                assert [key for key, _ in posts] == ['command', 'file']
+                assert [key for key, _ in posts] == ['command', 'file', 'preview']
                 assert all(body == {'decision': 'accept'} for _, body in posts)
                 page.screenshot(path=str(args.output / 'automatic-desktop.png'))
                 page.reload()
