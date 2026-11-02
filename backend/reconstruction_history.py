@@ -63,7 +63,8 @@ def _catalog(project):
         for view in scene.get("views", []):
             if view["id"] not in renders:
                 continue
-            row = {"id": view["id"], "render": built(renders[view["id"]], "该版本渲染")}
+            label = "该版本渲染" if view.get("reference_image") else "模型诊断视角 · 无对应实拍"
+            row = {"id": view["id"], "render": built(renders[view["id"]], label)}
             if view.get("reference_image"):
                 row["reference"] = asset(entry, view["reference_image"], "原始参考",
                                          receipt.get("asset_hashes", {}).get(view["reference_image"]))

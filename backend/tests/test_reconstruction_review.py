@@ -25,6 +25,13 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "examples/physical_world/scene.j
 
 
 class ReviewerRepairLoopTests(unittest.TestCase):
+    def test_model_only_views_cannot_replace_all_reference_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            write_json(project / "candidate.json", json.loads(EXAMPLE.read_text()))
+            with self.assertRaisesRegex(ValueError, "calibrated reference images"):
+                freeze_candidate(project, "candidate.json", "unused.json", project / "review")
+
     def test_segmentation_category_repairs_the_same_builder_without_reinitialization(self):
         self.exercise_repair_loop(publish=True)
 
@@ -73,6 +80,8 @@ class ReviewerRepairLoopTests(unittest.TestCase):
                 write_json(output / "scene.json", {"views": [{"id": key} for key in manifest["view_ids"]]})
                 (output / 'overlay.png').write_bytes(b'test attachment')
                 (output / 'depth.png').write_bytes(b'depth attachment')
+                (output / 'diagnostic.png').write_bytes(b'model-only diagnostic')
+                manifest['diagnostic_render_paths'] = [str(output / 'diagnostic.png')]
                 write_json(output / "inspection.json", {"inspection_paths": [], 'overlay_paths': [str(output / 'overlay.png')],
                     "depth": {"status": "measured", "inspection_paths": [str(output / 'depth.png')]}})
                 write_json(output / "editability.json", {"inspection_paths": []})
@@ -82,6 +91,8 @@ class ReviewerRepairLoopTests(unittest.TestCase):
                 self.assertEqual(kwargs["timeout"], 14400)
                 self.assertTrue(any(arg.endswith('/overlay.png') for arg in command))
                 self.assertTrue(any(arg.endswith('/depth.png') for arg in command))
+                self.assertTrue(any(arg.endswith('/diagnostic.png') for arg in command))
+                self.assertIn('do not treat them as matched-camera evidence', kwargs['input'])
                 self.assertIn('no candidate-based fitting', kwargs['input'])
                 self.assertIn('not a correctness probability', kwargs['input'])
                 self.assertIn('EVERY standalone overlay', kwargs['input'])

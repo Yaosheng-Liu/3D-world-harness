@@ -47,6 +47,7 @@ def main():
                        "intrinsics": {"width": 8, "height": 6, "fx": 5, "fy": 6, "cx": 3, "cy": 2},
                        "reference_image": "observations/train/000001.png"}]
     scene["views"][0]["camera_to_world"][2][3] = 3
+    scene["views"].append({"id": "diagnostic", "position": [2, -3, 4], "target": [0, 0, 0], "fov_y_deg": 50})
     receipt = build_world(project, blender=args.blender, scene=scene, render=True)
     before = file_hash(Path(receipt["blend_path"]))
     result = write_depth_inspection(project, scene, receipt, project / "depth_check", blender=args.blender)
@@ -68,6 +69,8 @@ def main():
     manifest = freeze_candidate(project, "candidate.json", "receipt.json", project / "frozen", blender=args.blender)
     assert "frozen/depth/model_depth.npz" in manifest["files"]
     assert manifest["source_view_ids"] == ["source_1", "source_7"]
+    assert manifest["diagnostic_view_ids"] == ["diagnostic"]
+    assert manifest["diagnostic_render_paths"] == [receipt["render_paths"][1]]
     verify_files(project, manifest["files"])
     print(json.dumps({"max_camera_z_error": error, "views": 2, "blend_unchanged": True,
                       "collider_excluded": True, "frozen_depth_bound": True}))

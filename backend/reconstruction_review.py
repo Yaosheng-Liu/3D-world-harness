@@ -211,8 +211,8 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
     scene = validate_scene(read_json(project_file(project, candidate_path)), project)
     if plan_path:
         validate_fixed_views(project, scene)
-    if any("reference_image" not in view for view in scene["views"]):
-        raise ValueError("real-scene review requires calibrated reference images for every view")
+    if not any("reference_image" in view for view in scene["views"]):
+        raise ValueError("real-scene review requires calibrated reference images")
     receipt = read_json(project_file(project, receipt_path))
     if receipt["scene_hash"] != scene_hash(scene) or receipt["revision"] != scene["revision"]:
         raise ValueError("build receipt belongs to another candidate")
@@ -285,6 +285,9 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
                 "scene_path": str((output / "scene.json").relative_to(project)),
                 "receipt_path": str((output / "build.json").relative_to(project)),
                 "files": files, "view_ids": [view["id"] for view in scene["views"]],
+                "diagnostic_view_ids": [view["id"] for view in scene["views"] if "reference_image" not in view],
+                "diagnostic_render_paths": [path for view, path in zip(scene["views"], receipt["render_paths"])
+                                            if "reference_image" not in view],
                 "object_ids": [obj["id"] for obj in scene["objects"]],
                 "checks": {"editability": edit_check["passed"]}, "physics": "deferred",
                 "previous_review_path": previous_path, **planned}
