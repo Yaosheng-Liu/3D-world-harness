@@ -1,2 +1,4 @@
 # Optional physical-world execution; web viewing does not require MuJoCo.
 mujoco>=3.3,<4
+# Cached DA3 / Blender geometry diagnostics.
+numpy>=1.26,<3

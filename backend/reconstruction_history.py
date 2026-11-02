@@ -36,6 +36,16 @@ def _catalog(project):
     def document(entry, path, label):
         entry["documents"].append(asset(entry, path, label))
 
+    def depth_views(entry, report, files):
+        if report.get("status") != "measured":
+            entry["facts"].append(["深度对比", "无缓存参考深度"])
+            return
+        entry["facts"].append(["深度对比", f"{len(report['views'])} 个训练视角 · 估计证据"])
+        for row in report["views"]:
+            name = str(project_file(project, row["inspection_path"]).relative_to(project))
+            entry["views"].append({"id": "深度 · " + row["view_id"], "render": asset(entry, name,
+                "参考深度 / 模型深度 / 差异 · 蓝近红远，灰色未知，紫色缺面；反光区域需结合原图", files[name])})
+
     def build(entry, receipt, scene):
         if receipt["scene_hash"] != scene_hash(scene):
             raise ValueError("saved build does not match the stage scene")
@@ -115,6 +125,17 @@ def _catalog(project):
                 entry = add(receipt_path, "modeling", f"第 {number} 轮 · " + ("首次建模" if number == 1 else "反馈返修"),
                             run=run, actor=roles["model"])
                 build(entry, receipt, job["scene"])
+                depth_reports = sorted((project_file(project, Path(receipt["build_dir"]) / "job.json").parent
+                                        / "depth_inspections").glob("*/report.json"))
+                if depth_reports:
+                    depth_path = project_file(project, depth_reports[-1])
+                    depth = read_json(depth_path)
+                    blend = project_file(project, receipt["blend_path"])
+                    if (depth["scene_hash"] != receipt["scene_hash"]
+                            or depth["input_files"][str(blend.relative_to(project))] != receipt["files"]["scene.blend"]):
+                        raise ValueError("depth inspection belongs to another model build")
+                    depth_views(entry, depth, depth["files"])
+                    document(entry, depth_path, "深度对比记录")
                 entry["summary"] = "此轮保存的建模结果；是否通过以对应候选的独立审核为准。"
                 report_path = receipt_path.with_name("modeling_report.json")
                 if report_path.is_file():
@@ -148,10 +169,13 @@ def _catalog(project):
         if inspection_path.is_file():
             name = str(inspection_path.relative_to(project))
             verify_files(project, {name: manifest['files'][name]})
-            for image_path in read_json(inspection_path).get('overlay_paths', []):
+            inspection = read_json(inspection_path)
+            for image_path in inspection.get('overlay_paths', []):
                 relative = str(project_file(project, image_path).relative_to(project))
                 check['views'].append({'id': '叠图 · ' + Path(image_path).stem,
                     'render': asset(check, image_path, '原图与模型各 50% · 同相机叠图', manifest['files'][relative])})
+            if "depth" in inspection:
+                depth_views(check, inspection["depth"], manifest["files"])
         for name, label in (("editability.json", "编辑检查报告"), ("metrics.json", "图像比较指标"), ("inventory.json", "物体覆盖报告")):
             report_path = directory / name
             if report_path.is_file():

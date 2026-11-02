@@ -34,9 +34,27 @@
 
 ## 运行完整流程
 
-每轮审核在原有四联对比图之外，向审核 Agent 直接附上每个固定视角的独立原分辨率叠图：原图与候选渲染各占50%，保持相同相机和像素坐标，不进行图像配准或变形。`inspection.json` 的 `overlay_paths` 登记这些图，随候选冻结并校验哈希；工具台「程序检查」的图像选择器可回看。审核需逐视角检查重影、轮廓、部件位置、遮挡与纹理错位，并对照其他视角、原图和纯渲染给出具体返修目标。叠图包含真实照片像素，不能把照片细节当作模型质量，也不能仅凭叠图判断凹凸或灯光原因。本轮只增强叠图证据与审核要求，不新增自动几何评分。
+每轮审核在原有四联对比图之外，向审核 Agent 直接附上每个固定视角的独立原分辨率叠图：原图与候选渲染各占50%，保持相同相机和像素坐标，不进行图像配准或变形。`inspection.json` 的 `overlay_paths` 登记这些图，随候选冻结并校验哈希；工具台「程序检查」的图像选择器可回看。审核需逐视角检查重影、轮廓、部件位置、遮挡与纹理错位，并对照其他视角、原图和纯渲染给出具体返修目标。叠图包含真实照片像素，不能把照片细节当作模型质量，也不能仅凭叠图判断凹凸或灯光原因。叠图用于视觉证据，不提供自动几何评分。
 
-入口为 `scripts/run_reconstruction.py`，前置输入沿用[已知相机多视角流程](multiview-reconstruction.md)的 prepared 原图、DA3 深度与已初始化世界。先复制并填写 [runtime.example.json](../examples/object_pipeline/runtime.example.json) 中本机的执行程序和权重路径。计划和审核分别运行只读 Codex 会话；建模复用工具台当前 Astra High 会话。运行环境可为角色指定 `home`，控制器只在调用该角色时设置 `CODEX_HOME`。
+### 共享深度对比
+
+建模 Agent 可按需调用 `scripts/world.py depth`；审核控制器在冻结候选时自动运行同一实现，将比较图附给只读审核 Agent。正式验收仍归审核阶段，不增加轮数或自动改网格。工具台「精细建模」显示该构建最近一次按需诊断，「程序检查」显示对应审核的冻结结果，图像选择器中标为「深度 · source_帧号」。
+
+```bash
+python scripts/world.py --project /path/to/project depth \
+  --receipt object_pipeline/RUN/round_01/model/build_receipt.json
+# 也可指定已有 DA3 训练帧：在上面命令末尾添加 --frames 118 268
+```
+
+- 复用 `dense/depths.npz` 和 `inference.json`，不重新推理 DA3。默认固定选取缓存训练序列中均匀分布的6帧；未缓存的留出视角不生成估计，也不宣称已经检查。
+- 在 DA3 原有分辨率、内参、OpenCV 外参下，从已保存 Blender 文件的可视网格求第一交点，转换为相机轴向 Z 深度。应用对象变换和网格修改器，排除碰撞体；不修改工程，不需要重新渲染 RGB，也不按当前模型拟合尺度或位姿。当前支持本项目保留原坐标的初始化，非单位 `source_to_world` 或不一致单位明确报错。
+- 每张检查图按「DA3 参考 / Blender 几何 / 模型减参考的深度差」排列。两张深度图共用参考缓存的98百分位上限；差异图饱和范围固定为整个参考缓存中位深度的正负10%，图内标出单位。这只是显示范围，不是验收阈值。
+- 蓝色表示模型更近，红色更远；灰色表示无效或低置信度参考，紫色表示可信参考处模型没有命中。每帧排除正有限置信度中最低20百分位，保留覆盖和缺面计数；分位数不是正确概率，缺面不当作零误差。原始模型深度、相机参数、参考来源与图像均记录并在审核时绑定哈希。
+- DA3 与初始化共享估计，不能单独证明真实形状。镜面、透明物体及遮挡需要原图多视角核对；第一交点不模拟反射、透射或材质位移。图上近远也不能单独证明凹凸，反馈继续使用现有 `spatial_structure` 类别，并注明实际参照关系。源图区域以完整原图为准，不能直接套用深度裁切图的像素坐标。
+
+缺少缓存深度的项目明确显示不可用；已有深度的哈希、坐标或运行错误直接报错，不自动切换算法。额外依赖为 NumPy（Blender 与现有 DA3 运行环境已有），浏览工具台不需要加载 DA3 权重。
+
+入口为 `scripts/run_reconstruction.py`，前置输入沿用[已知相机多视角流程](multiview-reconstruction.md)的 prepared 原图、DA3 深度与已初始化世界。先复制并填写 [runtime.example.json](../examples/object_pipeline/runtime.example.json) 中本机的执行程序和权重路径。计划和审核分别运行只读 Codex 会话；建模复用工具台当前 Astra 会话及其推理强度。运行环境可为角色指定 `home`，控制器只在调用该角色时设置 `CODEX_HOME`。
 
 ```bash
 python scripts/run_reconstruction.py \
@@ -91,6 +109,10 @@ flowchart TD
     GEO --> MODEL
     MODEL --> REVIEW[独立审核：原图对照、隐藏与移动检查]
     RGB --> REVIEW
+    DEPTH --> COMPARE[共享深度对比：固定DA3参考与Blender几何]
+    MODEL --> COMPARE
+    COMPARE -.->|按需辅助| MODEL
+    COMPARE -->|冻结图像证据| REVIEW
     REVIEW -->|所有问题直接反馈建模 Agent| MODEL
     REVIEW -->|通过| PUBLISH[发布可编辑场景]
 ```

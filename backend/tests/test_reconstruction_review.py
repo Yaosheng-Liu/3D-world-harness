@@ -72,13 +72,18 @@ class ReviewerRepairLoopTests(unittest.TestCase):
                 write_json(output / "candidate.json", manifest)
                 write_json(output / "scene.json", {"views": [{"id": key} for key in manifest["view_ids"]]})
                 (output / 'overlay.png').write_bytes(b'test attachment')
-                write_json(output / "inspection.json", {"inspection_paths": [], 'overlay_paths': [str(output / 'overlay.png')]})
+                (output / 'depth.png').write_bytes(b'depth attachment')
+                write_json(output / "inspection.json", {"inspection_paths": [], 'overlay_paths': [str(output / 'overlay.png')],
+                    "depth": {"status": "measured", "inspection_paths": [str(output / 'depth.png')]}})
                 write_json(output / "editability.json", {"inspection_paths": []})
                 return manifest
 
             def critic(command, **kwargs):
                 self.assertEqual(kwargs["timeout"], 14400)
                 self.assertTrue(any(arg.endswith('/overlay.png') for arg in command))
+                self.assertTrue(any(arg.endswith('/depth.png') for arg in command))
+                self.assertIn('no candidate-based fitting', kwargs['input'])
+                self.assertIn('not a correctness probability', kwargs['input'])
                 self.assertIn('EVERY standalone overlay', kwargs['input'])
                 self.assertIn('PURE render separately', kwargs['input'])
                 if timeout_failure:

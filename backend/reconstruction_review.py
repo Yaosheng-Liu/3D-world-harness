@@ -256,6 +256,16 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
     metrics = evaluate_views(project, scene, receipt)
     write_json(output / "metrics.json", metrics)
     inspection = write_view_inspection(project, scene, receipt)
+    from world_depth import write_depth_inspection
+    inspection["depth"] = write_depth_inspection(project, scene, receipt, output / "depth", blender=blender)
+    if inspection["depth"]["status"] == "measured":
+        files.update(inspection["depth"]["input_files"])
+        files.update(inspection["depth"]["files"])
+        files[str((output / "depth/report.json").relative_to(project))] = file_hash(output / "depth/report.json")
+        if not planned:
+            planned["source_observations"] = [{"view_id": row["view_id"], "frame_index": row["frame_index"],
+                                               "path": row["reference_image"]} for row in inspection["depth"]["views"]]
+            planned["source_view_ids"] = [row["view_id"] for row in inspection["depth"]["views"]]
     write_json(output / "inspection.json", inspection)
     # Hash every generated check, including the exact comparisons the critic sees.
     for path in [output / name for name in ("scene.json", "build.json", "editability.json", "metrics.json", "inspection.json")]:
@@ -278,7 +288,7 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
                 "object_ids": [obj["id"] for obj in scene["objects"]],
                 "checks": {"editability": edit_check["passed"]}, "physics": "deferred",
                 "previous_review_path": previous_path, **planned}
-    if planned:
+    if plan_path:
         manifest["checks"]["inventory"] = inventory_passed
         manifest["checks"]["edit_visual_coverage"] = all(row["status"] == "rendered" for row in edit_check["object_inspections"])
     write_json(output / "candidate.json", manifest)

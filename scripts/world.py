@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sys
+import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from core import APIError
@@ -23,6 +26,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="Initialize from a world JSON manifest").add_argument("source", type=Path)
     commands.add_parser("inspect").add_argument("--object-id")
+    depth = commands.add_parser("depth", help="Compare a candidate build with cached DA3 depth")
+    depth.add_argument("--receipt", required=True, type=Path)
+    depth.add_argument("--frames", nargs="+", type=int, help="Cached training frame indices; defaults to six evenly spaced views")
+    depth.add_argument("--blender", default=os.environ.get("SCENE_WORLD_BLENDER", "blender"))
     for command in ("edit", "restore", "build", "simulate", "evaluate"):
         sub = commands.add_parser(command)
         sub.add_argument("--expected-revision", required=True, type=int)
@@ -45,6 +52,19 @@ def main():
     try:
         if command == "init":
             result = WorldStore(project).initialize(read_json(options["source"]))
+        elif command == "depth":
+            from reconstruction_review import project_file
+            from world_depth import write_depth_inspection
+            project = project.resolve()
+            receipt = read_json(project_file(project, options["receipt"]))
+            job_path = project_file(project, Path(receipt["build_dir"]) / "job.json")
+            identifier = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8]
+            output = job_path.parent / "depth_inspections" / identifier
+            result = write_depth_inspection(project, read_json(job_path)["scene"], receipt, output,
+                                            blender=options["blender"], frames=options["frames"])
+            if result["status"] == "measured":
+                result = {"status": "measured", "report_path": str(output / "report.json"),
+                          "inspection_paths": result["inspection_paths"]}
         else:
             options = {key: value for key, value in options.items() if value is not None}
             for key in ("changes", "action"):

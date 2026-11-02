@@ -75,6 +75,32 @@ class HistoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown"):
             history_asset(self.project, "../../secret", "anything")
 
+    def test_model_depth_belongs_to_its_build_and_does_not_attach_to_initialization(self):
+        base = self.project / self.receipt["build_dir"]
+        blend = base / "scene.blend"; blend.write_bytes(b"model blend")
+        self.receipt.update(blend_path=str(blend))
+        self.receipt["files"]["scene.blend"] = file_hash(blend)
+        self.write("object_pipeline/run/round_01/model/build_receipt.json", self.receipt)
+        image = base / "depth_inspections/first/source_1.png"
+        image.parent.mkdir(parents=True); image.write_bytes(b"model depth")
+        report_path = str(image.with_name("report.json").relative_to(self.project))
+        report = {"status": "measured", "scene_hash": self.receipt["scene_hash"],
+                  "views": [{"view_id": "source_1", "inspection_path": str(image)}],
+                  "input_files": {str(blend.relative_to(self.project)): file_hash(blend)},
+                  "files": {str(image.relative_to(self.project)): file_hash(image)}}
+        self.write(report_path, report)
+        result = reconstruction_history(self.project)
+        self.assertFalse(result["errors"])
+        model = next(e for e in result["entries"] if e["stage"] == "modeling")
+        depth = next(v for v in model["views"] if v["id"] == "深度 · source_1")
+        self.assertEqual(self.asset(depth["render"]).read_bytes(), b"model depth")
+        initial = next(e for e in result["entries"] if e["stage"] == "initialization")
+        self.assertFalse(any(v["id"].startswith("深度") for v in initial["views"]))
+        self.write(report_path, {**report, "scene_hash": "other build"})
+        self.assertTrue(reconstruction_history(self.project)["errors"])
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            self.asset(depth["render"])
+
     def test_outside_symlink_and_partial_run_do_not_hide_valid_history(self):
         with tempfile.TemporaryDirectory() as outside:
             receipt = Path(outside) / "receipt.json"
@@ -94,11 +120,13 @@ class HistoryTests(unittest.TestCase):
         scene_path = str(self.write(base + "/scene.json", self.scene).relative_to(self.project))
         receipt_path = str(self.write(base + "/build.json", self.receipt).relative_to(self.project))
         overlay = self.project / base / 'overlay.png'; overlay.write_bytes(b'frozen overlay')
-        inspection = str(self.write(base + '/inspection.json', {'overlay_paths': [str(overlay)]}).relative_to(self.project))
+        depth = self.project / base / 'depth.png'; depth.write_bytes(b'frozen depth')
+        inspection = str(self.write(base + '/inspection.json', {'overlay_paths': [str(overlay)], 'depth': {
+            'status': 'measured', 'views': [{'view_id': 'source_1', 'inspection_path': str(depth)}]}}).relative_to(self.project))
         self.write(base + "/candidate.json", {"candidate_id": "frozen", "scene_path": scene_path,
                    "receipt_path": receipt_path, "checks": {"editability": False},
                    "files": {name: file_hash(self.project / name) for name in
-                             (scene_path, receipt_path, inspection, str(overlay.relative_to(self.project)))}})
+                             (scene_path, receipt_path, inspection, str(overlay.relative_to(self.project)), str(depth.relative_to(self.project)))}})
         self.write(base + "/review.json", {"candidate_id": "frozen", "summary": "needs revision", "issues": [{"id": "shape"}],
                    "verdict": "revise", "dimensions": {"structure": "failed"}, "reviewed_views": ["front"],
                    "checked_objects": ["chair"], "resolved_issue_ids": []})
@@ -110,6 +138,12 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(self.asset(review["views"][0]["render"]).read_bytes(), b"firstrenders/front.png")
         check = next(e for e in result['entries'] if e['stage'] == 'checking')
         self.assertEqual(self.asset(check['views'][0]['render']).read_bytes(), b'frozen overlay')
+        depth_view = next(v for v in check['views'] if v['id'] == '深度 · source_1')
+        self.assertEqual(self.asset(depth_view['render']).read_bytes(), b'frozen depth')
+        depth.write_bytes(b'changed depth')
+        with self.assertRaisesRegex(ValueError, 'changed'):
+            self.asset(depth_view['render'])
+        depth.write_bytes(b'frozen depth')
         overlay.write_bytes(b'changed overlay')
         with self.assertRaisesRegex(ValueError, 'changed'):
             self.asset(check['views'][0]['render'])

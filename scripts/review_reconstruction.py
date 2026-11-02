@@ -15,7 +15,8 @@ from urllib.request import ProxyHandler, Request, build_opener
 from urllib.error import HTTPError
 import uuid
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend"))
 from reconstruction_review import (freeze_candidate, project_file, read_json, review_schema,
                                    validate_review, verify_files, write_json)
 from world_model import WorldStore
@@ -101,6 +102,7 @@ Read-only task: do not modify any files, run modeling scripts, publish, or call 
 Project: {project}
 Frozen candidate: {frozen / 'candidate.json'}
 Candidate ID: {manifest['candidate_id']}
+When inspection.json.depth.status is measured, inspect EVERY attached depth sheet: reference DA3 estimate / Blender first-surface camera-Z / signed difference. Blue means candidate nearer, red farther, gray unknown or relatively low confidence, magenta missing model surface. These use cached DA3 intrinsics and original source_<frame> cameras, NOT the crops of similarly named render views. Use the full source image for issue regions. Scales are fixed from the reference cache, with no candidate-based fitting. Inspect reported coverage; six sampled training views are not full-scene depth verification. DA3 confidence is not a correctness probability, and DA3/TSDF initialization shares the same estimate. Mirrors, glass and lighting-dependent ambiguity need original cross-view evidence. A depth residual alone cannot prove protrusion/recession, causality, or an error in the model; corroborate it across views before requesting geometry changes. If depth is unavailable, do not claim it was checked. The harness generates these checks before your read-only review; do not execute the depth tool yourself.
 Read scene.json, build.json, editability.json, metrics.json and inspection.json in {frozen}. The attached comparison sheets show reference, PURE render, overlay, error, in that order. Additional images from evaluation/overlays/ are full-resolution 50% reference / 50% candidate overlays at the identical calibrated camera, with no registration or warping. inspection.json lists both image sets. Actually inspect EVERY standalone overlay, zooming into object/part boundaries when needed. Look for double edges, displaced corners, mismatched size/tilt/thickness, silhouette differences, incorrect overlap/depth ordering and displaced texture features even when the overall arrangement appears plausible. Check the same object in the other available original views before diagnosing its 3D shape; a single matching projection does not establish correct spatial structure. A widespread coherent shift may indicate camera/crop mismatch; verify it before requesting local geometry changes. Separate observed mismatch from inferred cause and use the existing spatial_structure, silhouette, texture_alignment and lighting categories. Cite the exact view, object/part and normalized region, and give a concrete cross-view repair target. Do not invent pixel measurements. Always compare the original and PURE render separately: the overlay contains real photograph pixels and cannot prove rendered detail, texture quality or acceptance. Recheck previous issues in the new overlays and identify regressions elsewhere. Fixed evaluation views may already have been seen during modeling; do not describe them as blind ground truth.
 Check every object: silhouette, completeness, support/occlusion, texture seams, missing surfaces, neighboring objects accidentally merged, duplicated remnants after separation, meaningful pivots and parent hierarchy. Test report proves transform isolation only, not semantic segmentation. Unobserved backs may be explicitly estimated; visible large defects or a generic box substituted for a detailed source object fail. A phototextured triangle soup or camera-facing photo planes do not satisfy the goal. Full-frame PSNR is diagnostic, never sufficient for acceptance.
 Appearance, structure and editability must ALL pass for accepted. Unknown or uncertain quality is revise/blocked. Review cannot waive deterministic check failures. Be strict but evidence-based; don't invent unseen real geometry. Scope is the complete visible input scene. Identify each independently editable object and its meaningful parts from the original references; adjacent objects and scene structure must not move with it.
@@ -165,6 +167,7 @@ def run(options):
                 inspection = read_json(frozen / "inspection.json")
                 edit_check = read_json(frozen / "editability.json")
                 for path in (inspection.get("inspection_paths", []) + inspection.get("overlay_paths", [])
+                             + inspection.get("depth", {}).get("inspection_paths", [])
                              + manifest.get("source_inspection_paths", [])
                              + edit_check.get("inspection_paths", [])):
                     command.extend(["--image", str(project_file(project, path))])
@@ -217,6 +220,8 @@ def run(options):
                     report_instruction = f"同时输出 {modeling_report_path}，遵循 {schema_path}，逐项说明每个初始化物体与未解释区域对应的候选对象、修正或排除理由及原图依据。"
                 note = f"""独立审核未通过，全部类别的问题都交给你在Blender中逐物体精细重建和修复。计划、SAM3、DA3、TSDF仅为初始化参考，不再退回计划或分割流程。按category处理：优先修spatial_structure的所有物体及部件的凹凸/内外、相对前后/朝向/厚度、连接与穿插，明确参照对象或表面，用有视差的原图和遮挡核对，不能仅凭阴影或单个深度预测定凹凸；证据不足明确记录。silhouette修轮廓几何，texture_alignment修UV/投影，lighting修灯光/曝光；材质本色问题单独处理。先核对相机，原因不确定时先补诊断；每条按指定视角及验收条件修复，不能把光影画进底色。先实际查看 {previous}、{frozen / 'inspection.json'} 和 {frozen / 'editability.json'} 中图像，再按原始多视角处理漏物体、错误边界、几何、材质与编辑问题。允许细化物体部件和层级，必须覆盖原有物体；不要把改名/多分几组当作真实外观完成。所有原候选与初始化/审核证据保持不变；新资产、脚本放 {next_dir}。输出 {candidate_path}（revision={world['revision'] + 1}）和 {receipt_path}，使用 build_world(scene=candidate, render=True)。{report_instruction}保持原世界坐标和固定验证相机，可补充检查视角。不要修改 world/scene.json，不发布，不修改仓库或审核记录。父子对象与本地原点必须通过实际移动旋转测试。物理延后。优先修复这些问题：{json.dumps(review['issues'][:5], ensure_ascii=False)}。检查其余旧问题，不能遗漏。"""
                 update("repairing")
+                note += (f" 可按需用 {sys.executable} {ROOT / 'scripts/world.py'} --project {project} depth --receipt <当前构建receipt>"
+                         " 辅助空间建模；默认6个缓存训练视角，可用--frames指定。蓝近红远，灰色未知，紫色缺面；结合原图与多视角，不按DA3单独验收。正式检查仍由审核阶段负责。")
                 feedback_id = workbench.repair(note, run_id + f"-repair-{number + 1}")
         except Exception as exc:
             update("failed", error=str(exc))
