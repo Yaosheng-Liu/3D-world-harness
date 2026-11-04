@@ -25,6 +25,7 @@ from reconstruction_plan import (PLAN_SCHEMA, MODEL_REPORT_SCHEMA, observations,
                                  ModelingReportError, read_modeling_report, validate_modeling_report)
 from world_build import file_hash
 from world_model import WorldStore, scene_hash
+from reconstruction_review import local_rebuild_prompt
 from review_reconstruction import Workbench, builder_role, run as review_candidate
 
 
@@ -124,6 +125,7 @@ def run_tool(name, runtime, project, run_dir, plan_path, output, segments_path=N
 
 
 def modeling_prompt(project, status, candidate, receipt, previous_review=None):
+    rebuild = local_rebuild_prompt(project, previous_review, project / Path(candidate).parent)
     diagnostic = status.get("builder_diagnostic_path")
     report_diagnostic = (f"{project / diagnostic}\n{read_json(project_file(project, diagnostic))['message']}"
                          if diagnostic else "无")
@@ -133,6 +135,7 @@ def modeling_prompt(project, status, candidate, receipt, previous_review=None):
 分割记录：{project / status['segments_path']}
 观测几何：{project / status['geometry_path']}
 上轮审核：{previous_review or '无'}
+{rebuild}
 空间建模可按需调用共享深度工具：{sys.executable} {ROOT / 'scripts/world.py'} --project {project} depth --receipt <当前构建receipt路径> [--frames 118 268]。使用实际缓存训练帧编号；默认取6个均匀分布视角。它复用固定DA3参考深度，读取当前Blender构建的几何，不需要渲染RGB或重跑DA3；报告列出原图、比较图及覆盖情况。图中蓝色=模型更近、红色=更远、灰色=未知/低置信度、紫色=模型缺面。结合多视角原图核对，镜面/玻璃尤其不能直接按深度改形状；不要重拟合参考尺度或改相机掩盖误差。可用它辅助建模，正式检查仍由审核阶段负责。上一轮inspection.json中的depth保存对应冻结候选的结果，不能当作当前模型已通过。
 审核目录inspection.json中的overlay_paths是同相机的原图/模型50%叠图；结合纯渲染和原图处理审核指出的重影、轮廓、部件位置、遮挡和纹理错位。叠图里的照片细节不代表模型已具备该细节，不能仅凭混合图验收。正式检查由审核Agent负责。
 按问题类别返工：先处理spatial_structure（空间结构错误），覆盖每个物体内部、部件之间及物体之间的关系，以相关对象/部件/表面及局部方向为参照，用有平移视差的多视角原图、遮挡和可信深度核对凹凸/内外、前后/朝向/厚度、连接/开口、穿插或悬空；曲面不强行套用墙面平面，证据中注明相关对象ID，不能只凭明暗或DA3/TSDF自证凹凸；先核对相机/坐标，证据不足标明不确定性，不能靠贴图或灯光掩盖结构错误。silhouette（轮廓错误）修几何/比例/褶皱；texture_alignment（纹理错位）修UV、来源视角与遮挡投影；lighting（光照偏差）修灯光及曝光，不能把阴影或高光画进底色补偿。appearance中的材质问题独立处理。先核对相机；原因不确定时按审核要求补诊断，不盲目同时修改几何、材质和灯光。每条反馈按其物体、视角、区域与验收条件处理，保留问题ID供审核复验。

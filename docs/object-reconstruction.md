@@ -34,6 +34,25 @@
 
 ## 运行完整流程
 
+### 反复出现的几何问题
+
+同一稳定问题ID连续两次审核仍属于 `spatial_structure`、`geometry` 或 `silhouette`，且本次严重度为 major/blocking，下一次返修会自动生成候选目录下的 `geometry_rebuild_tasks.json`，要求局部几何重建。已解决、新出现、轻微和纯外观问题不按此规则升级；不增加Agent、重试或审核轮数。
+
+建模需锁定相机与裁切，先从有平移视差的原图确认实体边界、遮挡与侧面，重新拟合少量位置、朝向、尺寸及连接参数，必要时替换错误局部网格。先保留同机位中性材质诊断再恢复外观，曲面不强制用平面拟合；证据不足需明确说明。处理依据与修改记入 `geometry_rebuild_notes.json`。审核复核原图对应关系及剩余不确定性，执行成功不代表几何正确。
+
+新增测量命令使用构建中的原相机，将明确对应的图像角点三角化，不使用DA3深度或当前网格，也不改变相机/尺度：
+
+```bash
+python scripts/world.py --project /path/to/project triangulate \
+  --receipt object_pipeline/RUN/round_01/model/build_receipt.json \
+  --landmarks object_pipeline/RUN/round_01/model/landmarks.json \
+  > /path/to/project/object_pipeline/RUN/round_01/model/landmark_fit.json
+```
+
+`landmarks.json` 为数组，例如 `[{"id":"corner","observations":[{"view_id":"source_20","pixel":[120,200]},{"view_id":"source_33","pixel":[150,210]}]}]`。示例坐标不能直接用于真实场景；必须在指定视角的实际 `reference_image` 中测量同一实体点，不能混用截图、裁切图和原图坐标。每点至少两个不同参考视角，模型专用诊断视角不能参与。输出原世界坐标、每视角重投影误差及视差角；无三角化基线或交点在相机后方时明确报错。低误差不证明对应身份正确，小视差下结果不稳定；单位沿用输入场景，不声称米制真值。
+
+任务、处理记录及命名为 `landmarks.json` / `landmark_fit.json` 的测量记录在下次审核中复制冻结并绑定哈希，供审核读取。这是辅助局部重建的测量工具，不是自动角点匹配、墙体识别或通用几何优化器。
+
 每轮审核在原有四联对比图之外，向审核 Agent 直接附上每个固定视角的独立原分辨率叠图：原图与候选渲染各占50%，保持相同相机和像素坐标，不进行图像配准或变形。`inspection.json` 的 `overlay_paths` 登记这些图，随候选冻结并校验哈希；工具台「程序检查」的图像选择器可回看。审核需逐视角检查重影、轮廓、部件位置、遮挡与纹理错位，并对照其他视角、原图和纯渲染给出具体返修目标。叠图包含真实照片像素，不能把照片细节当作模型质量，也不能仅凭叠图判断凹凸或灯光原因。叠图用于视觉证据，不提供自动几何评分。
 
 ### 共享深度对比

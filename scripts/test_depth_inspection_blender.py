@@ -66,7 +66,10 @@ def main():
     assert all(row["compared_pixels"] == 48 for row in result["views"])
     write_json(project / "candidate.json", scene)
     write_json(project / "receipt.json", receipt)
+    write_json(project / "geometry_rebuild_notes.json", {"issues": [{"issue_id": "plane", "reason": "synthetic fixture"}]})
     manifest = freeze_candidate(project, "candidate.json", "receipt.json", project / "frozen", blender=args.blender)
+    assert manifest["repair_evidence_paths"] == ["frozen/geometry_rebuild_notes.json"]
+    assert file_hash(project / "geometry_rebuild_notes.json") == manifest["files"]["frozen/geometry_rebuild_notes.json"]
     assert "frozen/depth/model_depth.npz" in manifest["files"]
     assert manifest["source_view_ids"] == ["source_1", "source_7"]
     assert manifest["diagnostic_view_ids"] == ["diagnostic"]

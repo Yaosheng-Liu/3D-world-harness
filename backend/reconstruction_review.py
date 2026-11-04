@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import subprocess
 import shutil
+import sys
 
 from jsonschema import Draft202012Validator
 
@@ -87,6 +88,44 @@ def verify_files(project, files):
     for name, digest in files.items():
         if file_hash(project_file(project, name)) != digest:
             raise ValueError(f"candidate evidence changed after freezing: {name}")
+
+
+def local_rebuild_issues(review, previous):
+    """Escalate major geometric issues retained across two consecutive reviews."""
+    categories = {"spatial_structure", "geometry", "silhouette"}
+    prior = {issue["id"] for issue in previous["issues"] if issue.get("category") in categories}
+    return [issue for issue in review["issues"] if issue["id"] in prior
+            and issue.get("category") in categories and issue["severity"] in {"blocking", "major"}]
+
+
+LOCAL_REBUILD_INSTRUCTIONS = """局部几何重建任务（优先于外观微调）：
+这些问题已在连续两次审核中保留。重新检验局部几何假设，允许替换错误网格、折面和连接关系，不能仅继续修改颜色、灯光或沿用错误轮廓。
+1. 锁定现有相机、裁切和坐标。从原始多视角选择至少两个有平移视差、能看清真实边界的视角；记录具体角点/转折线、遮挡关系和像素位置，阴影边缘不当作实体边缘。缺少对应或基线时记录不确定性，不臆造凹凸。
+2. 对同一实体角点可用 world.py triangulate 测量三维位置：输入 [{"id":"corner","observations":[{"view_id":"source_20","pixel":[x,y]},{"view_id":"source_33","pixel":[x,y]}]}]，像素必须来自对应 reference_image 的实际尺寸，示例视角应替换为本候选的真实视角。命令为 python scripts/world.py --project PROJECT triangulate --receipt RECEIPT --landmarks LANDMARKS。结果保存为当前候选目录 landmark_fit.json，输入保存为 landmarks.json。检查重投影误差与视差；不修改相机，不将DA3当独立真值。
+3. 用少量可解释参数重建局部位置、朝向、尺寸及连接。平面结构可据角点拟合相交平面；曲面使用其自身边界/截面，不强行套用墙面。保留正确邻物体与稳定ID；照片不能烘焙到错误几何来掩盖问题。
+4. 先保存相同参考机位的中性材质诊断，跨视角确认边界、侧面和遮挡，再恢复材质灯光。中性渲染只说明模型形状，不是真值；不要覆盖纯渲染或原图。正式验收交给审核，不重复整套检查。
+在当前候选目录 geometry_rebuild_notes.json 逐问题记录 issue_id、参考视角和边界依据、改变的几何参数、诊断图路径及仍不确定的部分；不要把执行成功写成审核通过。
+"""
+
+
+def local_rebuild_prompt(project, review_path, model_dir):
+    if not review_path:
+        return ""
+    path = project_file(project, review_path)
+    previous = path.parent / "previous_review.json"
+    if not previous.exists():  # First review has no earlier verdict to compare.
+        return ""
+    review = read_json(path)
+    issues = local_rebuild_issues(review, read_json(project_file(project, previous)))
+    if not issues:
+        return ""
+    tasks = {"candidate_id": review["candidate_id"], "review_path": str(path.relative_to(project)),
+             "mode": "local_geometry_rebuild", "issues": issues}
+    task_path = model_dir / "geometry_rebuild_tasks.json"
+    write_json(task_path, tasks)
+    command = f"{ROOT / 'scripts/world.py'} --project {project}"
+    return (LOCAL_REBUILD_INSTRUCTIONS.replace("python scripts/world.py --project PROJECT", f"{sys.executable} {command}")
+            + f"具体任务：{task_path}\n" + json.dumps(issues, ensure_ascii=False))
 
 
 def validate_fixed_views(project, scene):
@@ -236,6 +275,16 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
                                                         modeling_report_path=modeling_report_path)
     write_json(output / "scene.json", scene)
     write_json(output / "build.json", receipt)
+    repair_evidence = []
+    for name in ("geometry_rebuild_tasks.json", "geometry_rebuild_notes.json", "landmarks.json", "landmark_fit.json"):
+        source = project_file(project, candidate_path).parent / name
+        if source.exists():
+            source = project_file(project, source)
+            target = output / name
+            shutil.copyfile(source, target)
+            relative = str(target.relative_to(project))
+            files[relative] = file_hash(target)
+            repair_evidence.append(relative)
     inspection_ids = sorted(obj["id"] for obj in scene["objects"]) if planned else []
     job = {"blend_path": receipt["blend_path"], "scene": scene, "output_dir": str(output),
            "inspection_object_ids": inspection_ids}
@@ -290,7 +339,7 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
                                             if "reference_image" not in view],
                 "object_ids": [obj["id"] for obj in scene["objects"]],
                 "checks": {"editability": edit_check["passed"]}, "physics": "deferred",
-                "previous_review_path": previous_path, **planned}
+                "previous_review_path": previous_path, "repair_evidence_paths": repair_evidence, **planned}
     if plan_path:
         manifest["checks"]["inventory"] = inventory_passed
         manifest["checks"]["edit_visual_coverage"] = all(row["status"] == "rendered" for row in edit_check["object_inspections"])

@@ -15,13 +15,47 @@ from urllib.request import ProxyHandler, Request, build_opener
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import SceneStore
 from reconstruction_review import (accept_candidate, validate_review, verify_files, review_image, review_status,
-                                   write_json, freeze_candidate, freeze_plan_evidence)
+                                   write_json, freeze_candidate, freeze_plan_evidence,
+                                   local_rebuild_issues, local_rebuild_prompt)
 from server import make_server
 from world_build import file_hash
 from world_editor import edit_transform
 from world_model import WorldStore, scene_hash
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples/physical_world/scene.json"
+
+
+class LocalRebuildTests(unittest.TestCase):
+    def test_only_persistent_major_geometry_is_escalated(self):
+        issues = [{"id": "corner", "category": "spatial_structure", "severity": "major"},
+                  {"id": "fabric", "category": "geometry", "severity": "major"},
+                  {"id": "color", "category": "appearance", "severity": "major"},
+                  {"id": "minor", "category": "silhouette", "severity": "minor"}]
+        previous = {"issues": deepcopy(issues)}
+        current = {"issues": [issues[0], issues[2], issues[3],
+                              {"id": "new", "category": "spatial_structure", "severity": "major"}]}
+        self.assertEqual([row["id"] for row in local_rebuild_issues(current, previous)], ["corner"])
+        self.assertEqual(local_rebuild_issues({"issues": []}, previous), [])
+
+    def test_dispatch_records_bound_issues_and_preserves_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            issue = {"id": "corner", "object_id": "wall", "category": "spatial_structure", "severity": "major",
+                     "view_id": "front", "region": [0, 0, 1, 1], "evidence": "wrong corner",
+                     "acceptance_criterion": "fit front and side boundaries"}
+            review = {"candidate_id": "frozen", "issues": [issue]}
+            path = project / "review/review.json"
+            write_json(path, review)
+            self.assertEqual(local_rebuild_prompt(project, path, project / "model"), "")
+            write_json(path.with_name("previous_review.json"), review)
+            before = path.read_bytes()
+            prompt = local_rebuild_prompt(project, path, project / "model")
+            task = json.loads((project / "model/geometry_rebuild_tasks.json").read_text())
+            self.assertEqual(task["candidate_id"], "frozen")
+            self.assertEqual(task["issues"], [issue])
+            self.assertIn("triangulate", prompt)
+            self.assertIn("中性材质", prompt)
+            self.assertEqual(path.read_bytes(), before)
 
 
 class ReviewerRepairLoopTests(unittest.TestCase):

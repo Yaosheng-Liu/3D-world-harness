@@ -26,6 +26,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init", help="Initialize from a world JSON manifest").add_argument("source", type=Path)
     commands.add_parser("inspect").add_argument("--object-id")
+    landmarks = commands.add_parser("triangulate", help="Fit 3D landmarks from matched reference-image pixels")
+    landmarks.add_argument("--receipt", required=True, type=Path)
+    landmarks.add_argument("--landmarks", required=True, type=Path)
     depth = commands.add_parser("depth", help="Compare a candidate build with cached DA3 depth")
     depth.add_argument("--receipt", required=True, type=Path)
     depth.add_argument("--frames", nargs="+", type=int, help="Cached training frame indices; defaults to six evenly spaced views")
@@ -52,6 +55,9 @@ def main():
     try:
         if command == "init":
             result = WorldStore(project).initialize(read_json(options["source"]))
+        elif command == "triangulate":
+            from world_landmarks import inspect_landmarks
+            result = inspect_landmarks(project, options["receipt"], options["landmarks"])
         elif command == "depth":
             from reconstruction_review import project_file
             from world_depth import write_depth_inspection
