@@ -92,15 +92,19 @@ spark卧室第二版确实执行了Blender编辑：分离`main_bed`的17320个�
 
 接受结果必须绑定候选ID，覆盖全部固定视角及对象，外观、结构、编辑性均通过，程序检查通过，且无阻塞/主要问题。旧问题必须保留原ID或明确列为解决。未通过时，前几项问题连同完整报告回传同一个Astra会话，在新目录返工；最多3轮，仍不通过或证据不足时保留问题并停止自动迭代，不伪造通过结果。失败不会自动重发不确定的模型请求。审核通过才将候选作为新世界版本提交并发布；已完成场景归档仍需另外完成真实场景媒体与交付验证。
 
-工具台场景上方的「重建流程 / 物体编辑」展示当前显示版本、候选、轮次、两个角色、检查和问题单。候选原图/独立渲染可直接查看；问题定位到审核视角，可返回主工具台对齐同机位。`reconstruction/status.json`保存进度，各轮证据位于独立目录，未通过候选不会替换当前显示版本。
+工具台场景上方的重建阶段入口展示当前显示版本、候选、轮次、两个角色、检查和问题单。候选原图/独立渲染可直接查看；问题定位到审核视角，可返回主工具台对齐同机位。`reconstruction/status.json`保存进度，各轮证据位于独立目录，未通过候选不会替换当前显示版本。
 
 需要本轮审核结束后停止时，启动控制器时传 `--max-rounds 1`；保留候选和问题单，下次再修复，不自动提交下一轮建模。本次按用户收尾要求使用此设置。
 
 spark的独立审核CLI位于 `/home/yao/3D-harness/runtime/review-codex-0.164.0/`，使用其 `home` 子目录作为 `CODEX_HOME`。Ubuntu 24.04最初阻止bubblewrap创建用户命名空间；经用户明确授权，加载Ubuntu软件包提供的 `/etc/apparmor.d/bwrap-userns-restrict` 配置，未关闭全局AppArmor限制。实测只读沙盒可读工程，写文件和访问本地工具台端口均被拒绝；Sol 6.1 Ultra随后实际读取世界版本并识别附图。安装与探测记录留在该运行目录。环境探测成功不代表场景质量通过。配置依据：[官方Linux沙盒说明](https://learn.chatgpt.com/docs/sandboxing)。
 
-物体编辑针对当前已发布世界：选择物体、定位、修改父对象坐标下的位置或XYZ旋转，构建成功后再提交与发布；新GLB和Cycles使用同一工程。Agent运行、排队或重建审核期间禁止直接编辑。编辑会保留世界历史，并把新版本标为待复核，不继承旧版本的质量通过结论。此入口修改变换；几何、拓扑、纹理和父子结构由建模Agent或Blender编辑。
+场景上方的「场景编辑」打开独立编辑工作区。从当前显示的重建版本（包括未验收的建模预览）新建编辑分支，点击画布或搜索物体后调整位置、XYZ 旋转、整体缩放和材质。输入先在画布预览，点击「保存到编辑分支」后生成 Blender/GLB；Cycles 使用该分支已保存的工程。支持多个方案切换、撤销／重做、刷新恢复与下载 Blender 工程。
 
-验证：审核/编辑门槛10项、world48项、Cycles7项、插件11项通过。`scripts/test_reconstruction_workflow.py`在独立合成项目运行真实Blender与Chromium，验证候选图、问题区域、通过后发布、逐对象变换、保存后邻居不变、Cycles同步及手机布局；该合成检查不代表真实卧室候选通过。运行此检查需要Playwright及浏览器、NumPy、Pillow、Blender，且不会调用模型。
+编辑分支用于重建后的创作与布置，不自动回写重建场景或重建审核状态。`editing/<id>/state.json` 记录来源显示版本、来源哈希、编辑版本和历史游标；`revisions/*.json` 保存各版本的完整场景与构建收据。初始 Blender/GLB 复制到分支 `baseline/`，后续生成独立的 `world/builds/` 工程。OBJ、原图贴图等输入素材复用，保存前验证来源哈希；素材被改写时明确拒绝保存，需从新重建版本新建分支。
+
+首版采用数值变换与整体等比缩放，缩放包含子对象，烘焙进形状尺寸及子对象偏移，保持既有场景格式。材质可保留贴图叠色或移除贴图，切换原图贴色／表面材质；拓扑、物体分组、导入新模型、换新贴图仍由 Blender 编辑。编辑不调用审核或建模 Agent，也不代表物理参数已重新标定。
+
+验证命令：`PYTHONPATH=backend .venv/bin/python -m unittest backend.tests.test_scene_editor backend.tests.test_cycles_preview`。`scripts/test_scene_editor_browser.py --prepare-project /tmp/editor-fixture --blender /usr/bin/blender` 生成独立合成工程；用 `backend/server.py --external-review --project-dir /tmp/editor-fixture --data-dir /tmp/editor-fixture/data --port 18885` 启动后，运行 `scripts/test_scene_editor_browser.py --url http://127.0.0.1:18885 --output /tmp/editor-check` 验证浏览器选择、实时预览、保存、撤销重做、Cycles、刷新恢复与手机布局。需要 Blender、Playwright 及 Chromium，不调用模型。原 `scripts/test_reconstruction_workflow.py` 保留验收发布与阶段查看验证，编辑验证独立运行。
 
 ### 本次收尾位置
 

@@ -272,7 +272,7 @@ const cyclesPreview = createCyclesPreview({api, viewport:ui.viewport, capture:()
     near:camera.near, far:camera.far};
 }});
 const selectionOutline = new SelectionOutline(renderer);
-const reconstructionWorkflow = createReconstructionWorkflow({api, resourceURL, loadScene,
+const reconstructionWorkflow = createReconstructionWorkflow({api, resourceURL,
   focusObject:objectId => {
     let target;
     objectLayer.traverse(node => { if (node.userData.stable_id === objectId) target = node; });

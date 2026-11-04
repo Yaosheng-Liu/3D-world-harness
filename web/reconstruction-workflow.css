@@ -6,8 +6,7 @@
   font-size: 12px;
 }
 #reconstruction-bar[hidden],
-#reconstruction-dialog [hidden],
-#reconstruction-editor [hidden] {
+#reconstruction-dialog [hidden] {
   display: none !important;
 }
 .flow-bar-heading {
@@ -81,8 +80,7 @@
   color: #315a49;
   opacity: 1;
 }
-#reconstruction-dialog,
-#reconstruction-editor {
+#reconstruction-dialog {
   box-sizing: border-box;
   color: #242c27;
   background: #f9faf6;
@@ -99,30 +97,20 @@
   max-height: 92dvh;
   overflow: hidden;
 }
-#reconstruction-editor {
-  width: min(460px, 94vw);
-  max-height: 90dvh;
-  padding: 24px;
-  overflow: auto;
-}
-#reconstruction-dialog::backdrop,
-#reconstruction-editor::backdrop {
+#reconstruction-dialog::backdrop {
   background: #12201a80;
   backdrop-filter: blur(4px);
 }
-#reconstruction-dialog button,
-#reconstruction-editor button {
+#reconstruction-dialog button {
   font: inherit;
   cursor: pointer;
 }
-#reconstruction-dialog button:disabled,
-#reconstruction-editor button:disabled {
+#reconstruction-dialog button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 #reconstruction-dialog button:focus-visible,
-#reconstruction-dialog a:focus-visible,
-#reconstruction-editor button:focus-visible {
+#reconstruction-dialog a:focus-visible {
   outline: 2px solid #447a62;
   outline-offset: 2px;
 }
@@ -157,9 +145,6 @@
   margin-left: auto;
   color: #7a857a;
   font-size: 11px;
-}
-#reconstruction-editor .flow-heading {
-  padding: 0 0 16px;
 }
 .flow-layout {
   display: grid;
@@ -264,9 +249,7 @@
   font-size: 12px !important;
 }
 #reconstruction-dialog select,
-#reconstruction-dialog input[type='search'],
-#reconstruction-editor select,
-#reconstruction-editor input {
+#reconstruction-dialog input[type='search'] {
   border: 1px solid #d8dfd1;
   background: #fff;
   color: #3c493c;
@@ -667,58 +650,6 @@ label[for='flow-plan-view'] {
   color: #809172;
   font-size: 11px;
   overflow-wrap: anywhere;
-}
-.flow-vector {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-.flow-vector label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-}
-.flow-vector input {
-  min-width: 0;
-  width: 100%;
-}
-#flow-edit-form fieldset {
-  border: 1px solid #d8dfd1;
-  border-radius: 6px;
-  margin: 14px 0;
-  padding: 12px;
-}
-#flow-edit-form legend {
-  font-size: 11px;
-  color: #7c8b71;
-}
-#flow-object {
-  display: block;
-  width: 100%;
-  margin: 8px 0 12px;
-}
-#flow-editor-status,
-#flow-object-evidence,
-#flow-units,
-#flow-edit-result {
-  font-size: 12px;
-  color: #7a8970;
-  overflow-wrap: anywhere;
-}
-#flow-apply {
-  background: #426b4d;
-  color: #fff;
-  border: 0;
-  padding: 9px 15px;
-  border-radius: 5px;
-}
-#flow-reset,
-#flow-focus {
-  border: 0;
-  background: none;
-  color: #527847;
-  padding: 9px 12px;
 }
 @media (max-width: 760px) {
   .flow-readonly {

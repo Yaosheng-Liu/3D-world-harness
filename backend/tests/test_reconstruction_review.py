@@ -19,7 +19,6 @@ from reconstruction_review import (accept_candidate, validate_review, verify_fil
                                    local_rebuild_issues, local_rebuild_prompt)
 from server import make_server
 from world_build import file_hash
-from world_editor import edit_transform
 from world_model import WorldStore, scene_hash
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples/physical_world/scene.json"
@@ -292,26 +291,12 @@ class EditorTests(unittest.TestCase):
         self.payload = {"expected_revision":1, "expected_scene_revision":1,
                         "object_id":"block", "position":[1,2,3], "rotation":[0,0,.2]}
 
-    def test_build_failure_does_not_modify_world(self):
-        with patch("world_editor.published_build", return_value=({"revision":1},{"scene_hash":scene_hash(self.scene)})), \
-             patch("world_editor.build_world", side_effect=ValueError("broken mesh")):
-            with self.assertRaisesRegex(ValueError,"broken mesh"):
-                edit_transform(self.project,self.store,self.payload)
-        self.assertEqual(self.world.read(),self.scene)
-
-    def test_running_review_blocks_edits(self):
-        write_json(self.project / "reconstruction/status.json", {"stage":"reviewing"})
-        with patch("world_editor.build_world") as build:
-            with self.assertRaisesRegex(Exception,"审核正在运行"):
-                edit_transform(self.project,self.store,self.payload)
-            build.assert_not_called()
-
     def test_http_transform_requires_browser_capability(self):
         server = make_server(port=0,data_dir=self.project / "server",project_dir=self.project)
         thread = threading.Thread(target=server.serve_forever,daemon=True); thread.start()
         try:
             op = build_opener(ProxyHandler({})); url = f"http://127.0.0.1:{server.server_port}"
-            for path in ("world-editor", "reconstruction/accept"):
+            for path in ("scene-editor", "reconstruction/accept"):
                 with self.assertRaises(HTTPError) as caught:
                     op.open(Request(url+'/api/workspace/'+path,data=b'{}',headers={'Content-Type':'application/json'}))
                 self.assertEqual(caught.exception.code,403)

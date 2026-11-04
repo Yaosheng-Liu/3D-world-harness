@@ -88,6 +88,13 @@ def render_preview(project, store, payload):
     scene, record = published_build(project, store)
     if scene["revision"] != payload["scene_revision"]:
         raise APIError(409, "Scene changed; render the current view again")
+    return render_build_preview(project, record, payload, lambda: store.scene()["revision"] == scene["revision"])
+
+
+def render_build_preview(project, record, payload, is_current):
+    """Render a frozen build; the caller owns its revision namespace."""
+    validate_request(payload)
+    project = Path(project).resolve()
     blend = Path(record["blend_path"]).resolve()
     if not blend.is_relative_to(project) or not blend.is_file():
         raise APIError(409, "Published Blender source is unavailable")
@@ -112,10 +119,10 @@ def render_preview(project, store, payload):
                     raise APIError(503, "Blender is not installed on this workbench host") from exc
             if result.returncode:
                 raise APIError(500, "Cycles failed: " + (root / "render.log").read_text()[-1500:])
-            if store.scene()["revision"] != scene["revision"]:
+            if not is_current():
                 raise APIError(409, "Scene changed during rendering; preview discarded")
             report = json.loads((root / "report.json").read_text())
-            return {**report, "scene_revision": scene["revision"], "build_id": record["id"],
+            return {**report, "scene_revision": payload["scene_revision"], "build_id": record["id"],
                     "image": "data:image/png;base64," + base64.b64encode((root / "preview.png").read_bytes()).decode()}
     finally:
         RENDER_SLOT.release()

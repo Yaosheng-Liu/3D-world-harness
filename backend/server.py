@@ -35,7 +35,8 @@ from cycles_preview import published_build, render_preview
 from reconstruction_review import accept_candidate, review_status, review_image
 from reconstruction_plan import planning_status, planning_image
 from reconstruction_history import reconstruction_history, history_asset
-from world_editor import editor_state, edit_transform
+from world_editor import editor_state
+from scene_editor import SceneEditor
 
 
 HERE = Path(__file__).resolve().parent
@@ -651,19 +652,31 @@ def _make_server_unlocked(
                     return self._send_json(200, accept_candidate(project_root, store, **payload))
                 except (ValueError, FileNotFoundError) as exc:
                     raise APIError(409, str(exc)) from exc
+            editor_match = re.fullmatch(r"/api/workspace/scene-editor(?:/([0-9a-f]{32})(?:/(asset|render))?)?", path)
+            if editor_match and self.command in {"GET", "POST"}:
+                identifier, operation = editor_match.groups()
+                editor = SceneEditor(project_root, store)
+                try:
+                    if self.command == "GET":
+                        if operation == "asset":
+                            return self._send_file(editor.asset(identifier, query.get("kind", [""])[0],
+                                                                int(query.get("version", ["0"])[0])))
+                        if operation is None:
+                            return self._send_json(200, editor.describe(identifier) if identifier else editor.list())
+                    else:
+                        self._require_browser_capability()
+                        payload = self._read_json()
+                        if operation == "render":
+                            return self._send_json(200, editor.render(identifier, payload))
+                        if operation is None:
+                            result = editor.update(identifier, payload) if identifier else editor.create(payload)
+                            return self._send_json(200, result)
+                    raise APIError(405, "不支持的编辑请求")
+                except (ValueError, OSError) as exc:
+                    raise APIError(409, str(exc)) from exc
             if self.command == "GET" and path == "/api/workspace/world-editor":
                 try:
                     return self._send_json(200, editor_state(project_root, store))
-                except ValueError as exc:
-                    raise APIError(409, str(exc)) from exc
-            if self.command == "POST" and path == "/api/workspace/world-editor":
-                self._require_browser_capability()
-                workspace = gateway.state()
-                if (workspace["agent"]["status"] not in {"idle", "external_idle"}
-                        or gateway._model_settings_busy(workspace)):
-                    raise APIError(409, "请先等待当前 Agent 任务完成")
-                try:
-                    return self._send_json(200, edit_transform(project_root, store, self._read_json()))
                 except ValueError as exc:
                     raise APIError(409, str(exc)) from exc
             world_match = re.fullmatch(r"/api/workspace/world/([a-z]+)", path)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic browser checks for stage navigation, history isolation and current editing."""
+"""Synthetic browser checks for stage navigation, history isolation and branch entry."""
 import argparse
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -39,7 +39,7 @@ def main():
                  'workspace':{'scene_revision':4,'approvals':[],'reference_clip':{'frames':[{'url':'/reference.png'}]}},
                  'editor':{'revision':2,'scene_revision':4,'units':'arbitrary','matches_display':True,'editable':True,'objects':[{'id':'chair','name':'椅子','parent_id':None,'position':[0,0,0],'rotation':[0,0,0],'evidence':{'notes':'合成测试'}}]}}
         (root / 'fixture.json').write_text(json.dumps(fixture,ensure_ascii=False))
-        (root / 'fixture.html').write_text('''<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>阶段回溯合成测试</title>
+        (root / 'fixture.html').write_text('''<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>阶段回溯合成测试</title><script type="importmap">{"imports":{"three":"/web/vendor/three/build/three.module.min.js"}}</script>
 <link rel="stylesheet" href="/web/styles.css"><link rel="stylesheet" href="/web/reconstruction-workflow.css"><main class="scene-pane" style="padding:24px"><div class="pane-head"></div></main><script type="module">
 import {createReconstructionWorkflow} from '/web/reconstruction-workflow.js';
 window.fixture=await(await fetch('/fixture.json')).json();window.writes=[];window.focused=[];window.loaded=[];
@@ -64,7 +64,7 @@ window.workflow=createReconstructionWorkflow({api,resourceURL:p=>p,loadScene:asy
                 assert page.locator('.flow-track button').count()==6
                 page.locator('.flow-track [data-stage=modeling]').click()
                 page.wait_for_function("document.querySelector('#flow-title').textContent.includes('第 2 轮')")
-                assert page.locator('#flow-plan').is_hidden() and page.locator('#flow-edit-form').is_hidden()
+                assert page.locator('#flow-plan').is_hidden() and page.locator('#scene-editor').is_hidden()
                 assert page.locator('#flow-render').get_attribute('src')=='/second.png'
                 page.locator('#flow-history-version').select_option('first')
                 assert page.locator('#flow-render').get_attribute('src')=='/first.png'
@@ -97,15 +97,7 @@ window.workflow=createReconstructionWorkflow({api,resourceURL:p=>p,loadScene:asy
                 assert '尚未验收' in page.locator('#flow-empty').inner_text()
                 assert page.evaluate('writes.length===0 && loaded.length===0')
                 page.locator('#flow-close').click()
-                page.locator('#flow-editor-open').click();page.wait_for_selector('#flow-object')
-                assert not page.locator('#reconstruction-dialog').is_visible()
-                page.get_by_label('位置 X',exact=True).fill('2.5');page.locator('#flow-apply').click()
-                page.wait_for_function('writes.length===1 && loaded.length===1')
-                assert page.evaluate('writes[0].position[0]')==2.5
-                page.locator('#flow-editor-close').click()
-                page.evaluate("fixture.editor.draft=true;fixture.editor.editable=false")
-                page.locator('#flow-editor-open').click();page.wait_for_function("document.querySelector('#flow-edit-form').hidden")
-                page.locator('#flow-focus').click();assert page.evaluate('focused')==['chair']
+                assert page.locator('#flow-editor-open').is_visible()
                 page.set_viewport_size({'width':390,'height':844})
                 page.locator('.flow-track [data-stage=reviewing]').click();page.wait_for_selector('#flow-issues button')
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
@@ -113,7 +105,7 @@ window.workflow=createReconstructionWorkflow({api,resourceURL:p=>p,loadScene:asy
                 page.screenshot(path=str(args.output/'review-mobile.png'))
                 page.keyboard.press('Escape');assert not page.locator('#reconstruction-dialog').is_visible()
                 assert not errors,errors
-                result={'synthetic_only':True,'stage_navigation':True,'history_versions_isolated':True,'classified_review_evidence':True,'initialization_evidence':True,'current_editor_separate':True,'history_never_writes_scene':True,'draft_stays_readonly':True,'mobile_no_overflow':True,'page_errors':errors}
+                result={'synthetic_only':True,'stage_navigation':True,'history_versions_isolated':True,'classified_review_evidence':True,'initialization_evidence':True,'current_editor_separate':True,'history_never_writes_scene':True,'mobile_no_overflow':True,'page_errors':errors}
                 (args.output/'result.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2));browser.close()
         finally:server.shutdown();server.server_close();thread.join(timeout=2)
 

@@ -3,7 +3,6 @@
 import argparse
 from copy import deepcopy
 import json
-import math
 import os
 from pathlib import Path
 import subprocess
@@ -84,38 +83,27 @@ def main():
             browser = playwright.chromium.launch(headless=True,args=['--no-sandbox','--no-proxy-server','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
             page = browser.new_page(viewport={"width":1440,"height":1000})
             errors=[]; page.on('pageerror',lambda error:errors.append(str(error)))
-            page.goto(url); page.locator('#flow-open').wait_for(state='visible',timeout=60000)
-            page.locator('#flow-open').click()
-            page.wait_for_function("document.querySelector('#flow-object').options.length > 0")
+            page.goto(url); page.locator('#flow-editor-open').wait_for(state='visible',timeout=60000)
+            page.locator('.flow-track [data-stage=reviewing]').click()
             page.wait_for_function("document.querySelector('#flow-render').naturalWidth > 0 && document.querySelector('#flow-reference').naturalWidth > 0")
             page.locator('#flow-issues button').first.click()
             assert page.locator('.flow-region:not([hidden])').count()==2
             page.screenshot(path=str(args.output / "workflow.png"))
-            page.locator('#flow-object').select_option('block')
-            page.locator('#flow-position input').nth(0).fill('0.2')
-            page.locator('#flow-rotation input').nth(2).fill('30')
-            page.locator('#flow-apply').click()
-            page.wait_for_function("/^(已保存|未完成)/.test(document.querySelector('#flow-edit-result').textContent)",timeout=120000)
-            assert page.locator('#flow-edit-result').inner_text().startswith('已保存'), page.locator('#flow-edit-result').inner_text()
-            after=world.read(); before={obj['id']:obj for obj in source['objects']}; changed={obj['id']:obj for obj in after['objects']}
-            assert after['revision']==3
-            assert changed['block']['position']==[.2,.15,.835]
-            assert abs(changed['block']['rotation'][2]-math.pi/6)<1e-6
-            assert all(before[key]==changed[key] for key in before if key!='block')
-            page.screenshot(path=str(args.output / "edited.png"))
+            after = world.read()
+            assert after['revision'] == 2
             page.locator('#flow-close').click()
             page.locator('#cycles-auto').uncheck()
             page.locator('#cycles-render').click()
             page.wait_for_function("document.querySelector('.cycles-preview-image')?.hidden === false",timeout=60000)
             page.screenshot(path=str(args.output / "edited-cycles.png"))
             page.set_viewport_size({"width":390,"height":844})
-            page.locator('#flow-open').click()
+            page.locator('.flow-track [data-stage=reviewing]').click()
             assert page.locator('#reconstruction-dialog').evaluate('e => e.scrollWidth <= e.clientWidth+2')
             page.screenshot(path=str(args.output / "mobile.png"))
             assert not errors, errors
             browser.close()
         result={"project":str(project),"edit_checks":frozen["checks"],"world_revision":after['revision'],
-                "acceptance_publication":True,"unchanged_neighbors":True,"cycles_after_edit":True,"page_errors":errors,
+                "acceptance_publication":True,"history_does_not_edit_world":True,"cycles":True,"page_errors":errors,
                 "synthetic_only":True}
         write_json(args.output / "result.json",result); print(json.dumps(result,indent=2))
     finally:

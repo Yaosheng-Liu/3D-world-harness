@@ -1,3 +1,5 @@
+import { createSceneEditor } from './scene-editor.js';
+
 const stages = {
   not_started: '等待开始',
   modeling: '正在建模',
@@ -102,11 +104,11 @@ const timeLabel = (value) =>
       })
     : '';
 
-export function createReconstructionWorkflow({ api, resourceURL, loadScene, focusObject, alignView }) {
+export function createReconstructionWorkflow({ api, resourceURL, focusObject, alignView }) {
   const bar = document.createElement('div');
   bar.id = 'reconstruction-bar';
   bar.hidden = true;
-  bar.innerHTML = `<div class="flow-bar-heading"><span class="flow-dot"></span><strong id="flow-stage"></strong><span id="flow-version"></span><button id="flow-editor-open" type="button">物体编辑 ↗</button></div><nav class="flow-track" aria-label="重建阶段">${pipelineSteps.map(([key, label], i) => `<button type="button" data-stage="${key}"><span class="flow-step-number">${String(i + 1).padStart(2, '0')}</span>${label}<span class="flow-step-state"></span></button>`).join('')}</nav>`;
+  bar.innerHTML = `<div class="flow-bar-heading"><span class="flow-dot"></span><strong id="flow-stage"></strong><span id="flow-version"></span><button id="flow-editor-open" type="button">场景编辑 ↗</button></div><nav class="flow-track" aria-label="重建阶段">${pipelineSteps.map(([key, label], i) => `<button type="button" data-stage="${key}"><span class="flow-step-number">${String(i + 1).padStart(2, '0')}</span>${label}<span class="flow-step-state"></span></button>`).join('')}</nav>`;
   document.querySelector('.scene-pane > .pane-head').append(bar);
   const dialog = document.createElement('dialog');
   dialog.id = 'reconstruction-dialog';
@@ -128,30 +130,13 @@ export function createReconstructionWorkflow({ api, resourceURL, loadScene, focu
   <div id="flow-empty" class="flow-empty" hidden></div>
   </main></div>`;
   document.body.append(dialog);
-  const editorDialog = document.createElement('dialog');
-  editorDialog.id = 'reconstruction-editor';
-  editorDialog.setAttribute('aria-label', '当前场景物体编辑');
-  editorDialog.innerHTML = `<div class="flow-heading"><div><small>CURRENT SCENE</small><h2>物体编辑</h2></div><button id="flow-editor-close" type="button" aria-label="关闭物体编辑">×</button></div><p id="flow-editor-status"></p><label for="flow-object">选择物体</label><select id="flow-object"></select><button id="flow-focus" type="button">定位物体 ↗</button><p id="flow-object-evidence"></p><form id="flow-edit-form"><fieldset><legend>位置 · 父对象坐标</legend><div class="flow-vector" id="flow-position"></div></fieldset><fieldset><legend>旋转 · 度 / XYZ</legend><div class="flow-vector" id="flow-rotation"></div></fieldset><p id="flow-units"></p><button id="flow-apply" type="submit">保存并更新场景</button><button id="flow-reset" type="button">重置输入</button></form><p id="flow-edit-result" role="status"></p>`;
-  document.body.append(editorDialog);
+  const sceneEditor = createSceneEditor({ api, resourceURL });
   const el = (name) => document.getElementById('flow-' + name);
-  for (const field of ['position', 'rotation'])
-    for (const axis of ['X', 'Y', 'Z']) {
-      const label = document.createElement('label');
-      label.textContent = axis;
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.step = 'any';
-      input.required = true;
-      input.setAttribute('aria-label', (field === 'position' ? '位置 ' : '旋转 ') + axis);
-      label.append(input);
-      el(field).append(label);
-    }
   let status = { stage: 'not_started' },
     workspace = {},
     editor = null,
     lastPoll = 0,
-    polling = false,
-    saving = false;
+    polling = false;
   let history = { entries: [], errors: [] },
     activeStage = 'modeling',
     entry = null,
@@ -164,7 +149,6 @@ export function createReconstructionWorkflow({ api, resourceURL, loadScene, focu
     selectedIssueId = null;
   const entrySelection = new Map();
   const modelLabel = (role) => (role ? `${role.model} · ${role.effort}` : '自动处理');
-  const selectedObject = () => editor?.objects.find((obj) => obj.id === el('object').value);
   const selectedView = () => entry?.views?.find((view) => view.id === el('view').value);
   const selectedPlannedObject = () => plan?.objects.find((obj) => obj.id === plannedObjectId);
   const isBusy = () => busyStages.has(status.stage) || planningBusyStages.has(status.planning?.stage);
@@ -175,48 +159,10 @@ export function createReconstructionWorkflow({ api, resourceURL, loadScene, focu
     if (className) item.className = className;
     return item;
   };
-  function fillObject() {
-    const obj = selectedObject();
-    el('edit-form').hidden = Boolean(editor?.draft);
-    for (const field of ['position', 'rotation'])
-      [...el(field).querySelectorAll('input')].forEach((input, i) => {
-        input.value = obj
-          ? Number((obj[field][i] * (field === 'rotation' ? 180 / Math.PI : 1)).toFixed(6))
-          : '';
-      });
-    el('object-evidence').textContent = obj
-      ? `父对象：${obj.parent_id || '场景'}。${obj.evidence.notes}`
-      : '';
-    el('apply').disabled =
-      saving || !obj || !editor?.matches_display || editor?.editable === false || isBusy();
-    el('focus').disabled = !obj;
-  }
-
   async function refreshEditor() {
-    try {
-      const next = await api('/api/workspace/world-editor');
-      const selected = el('object').value;
-      editor = next;
-      el('object').replaceChildren(
-        ...editor.objects.map((obj) => new Option(obj.name + ' · ' + obj.id, obj.id)),
-      );
-      if (editor.objects.some((obj) => obj.id === selected)) el('object').value = selected;
-      el('editor-status').textContent = editor.draft
-        ? `建模中预览 v${editor.scene_revision} · ${editor.objects.length} 个对象 · 可定位、标注并提交修改意见，尚未验收`
-        : `显示 v${editor.scene_revision} · 世界 v${editor.revision} · ${editor.objects.length} 个对象`;
-      el('units').textContent =
-        editor.units === 'm'
-          ? '位置单位：米。修改父对象会带动其子对象。'
-          : '位置使用重建坐标，尚未标定米制尺度。修改父对象会带动其子对象。';
-      fillObject();
-      showPlannedPublication();
-    } catch (error) {
-      editor = null;
-      el('object').replaceChildren();
-      fillObject();
-      showPlannedPublication();
-      el('editor-status').textContent = error.message;
-    }
+    try { editor = await api('/api/workspace/world-editor'); }
+    catch { editor = null; }
+    showPlannedPublication();
   }
 
   function showPlannedPublication() {
@@ -362,7 +308,7 @@ export function createReconstructionWorkflow({ api, resourceURL, loadScene, focu
     );
   }
   function renderBar() {
-    bar.hidden = status.stage === 'not_started' && !workspace.reference_clip && !status.planning;
+    bar.hidden = status.stage === 'not_started' && !workspace.reference_clip && !status.planning && !status.preview;
     bar.dataset.active = String(isBusy());
     const stage = status.planning?.stage || status.stage;
     el('stage').textContent =
@@ -685,7 +631,7 @@ export function createReconstructionWorkflow({ api, resourceURL, loadScene, focu
     try {
       status = await api('/api/workspace/reconstruction');
       renderBar();
-      if ((dialog.open || editorDialog.open) && editor?.scene_revision !== workspace.scene_revision)
+      if (dialog.open && editor?.scene_revision !== workspace.scene_revision)
         await refreshEditor();
       const key = JSON.stringify([status.updated_at, status.planning?.updated_at, workspace.scene_revision]);
       if (key !== historyKey) {
@@ -729,51 +675,6 @@ export function createReconstructionWorkflow({ api, resourceURL, loadScene, focu
       focusObject(obj.id);
     }
   };
-  el('editor-open').onclick = async () => {
-    editorDialog.showModal();
-    await refreshEditor();
-  };
-  el('editor-close').onclick = () => editorDialog.close();
-  el('object').onchange = fillObject;
-  el('reset').onclick = fillObject;
-  el('focus').onclick = () => {
-    if (selectedObject()) {
-      editorDialog.close();
-      focusObject(selectedObject().id);
-    }
-  };
-  el('edit-form').onsubmit = async (event) => {
-    event.preventDefault();
-    const obj = selectedObject();
-    if (!obj || saving) return;
-    saving = true;
-    el('apply').disabled = true;
-    el('edit-result').textContent = '正在构建并保存…';
-    const vector = (field) =>
-      [...el(field).querySelectorAll('input')].map(
-        (input) => Number(input.value) * (field === 'rotation' ? Math.PI / 180 : 1),
-      );
-    try {
-      const result = await api('/api/workspace/world-editor', {
-        method: 'POST',
-        body: {
-          expected_revision: editor.revision,
-          expected_scene_revision: editor.scene_revision,
-          object_id: obj.id,
-          position: vector('position'),
-          rotation: vector('rotation'),
-        },
-      });
-      await loadScene(result.scene);
-      await refreshEditor();
-      await refresh({ ...workspace, scene_revision: result.scene.revision }, true);
-      el('edit-result').textContent = '已保存。当前编辑版本仍需复核。';
-    } catch (error) {
-      el('edit-result').textContent = '未完成：' + error.message;
-    } finally {
-      saving = false;
-      fillObject();
-    }
-  };
+  el('editor-open').onclick = () => sceneEditor.open();
   return { refresh };
 }
