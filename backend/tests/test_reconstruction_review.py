@@ -26,16 +26,18 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "examples/physical_world/scene.j
 
 
 class LocalRebuildTests(unittest.TestCase):
-    def test_only_persistent_major_geometry_is_escalated(self):
-        issues = [{"id": "corner", "category": "spatial_structure", "severity": "major"},
-                  {"id": "fabric", "category": "geometry", "severity": "major"},
+    def test_first_report_prioritizes_major_geometry_without_dropping_issues(self):
+        issues = [{"id": "fabric", "category": "geometry", "severity": "major"},
+                  {"id": "contour", "category": "silhouette", "severity": "major"},
+                  {"id": "corner", "category": "spatial_structure", "severity": "major"},
                   {"id": "color", "category": "appearance", "severity": "major"},
-                  {"id": "minor", "category": "silhouette", "severity": "minor"}]
-        previous = {"issues": deepcopy(issues)}
-        current = {"issues": [issues[0], issues[2], issues[3],
-                              {"id": "new", "category": "spatial_structure", "severity": "major"}]}
-        self.assertEqual([row["id"] for row in local_rebuild_issues(current, previous)], ["corner"])
-        self.assertEqual(local_rebuild_issues({"issues": []}, previous), [])
+                  {"id": "minor", "category": "silhouette", "severity": "minor"},
+                  {"id": "missing-surface", "category": "geometry", "severity": "blocking"}]
+        original = deepcopy(issues)
+        self.assertEqual([row["id"] for row in local_rebuild_issues({"issues": issues})],
+                         ["missing-surface", "corner", "fabric", "contour"])
+        self.assertEqual(issues, original)
+        self.assertEqual(local_rebuild_issues({"issues": []}), [])
 
     def test_dispatch_records_bound_issues_and_preserves_review(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -46,10 +48,9 @@ class LocalRebuildTests(unittest.TestCase):
             review = {"candidate_id": "frozen", "issues": [issue]}
             path = project / "review/review.json"
             write_json(path, review)
-            self.assertEqual(local_rebuild_prompt(project, path, project / "model"), "")
-            write_json(path.with_name("previous_review.json"), review)
             before = path.read_bytes()
             prompt = local_rebuild_prompt(project, path, project / "model")
+            self.assertFalse(path.with_name("previous_review.json").exists())
             task = json.loads((project / "model/geometry_rebuild_tasks.json").read_text())
             self.assertEqual(task["candidate_id"], "frozen")
             self.assertEqual(task["issues"], [issue])
@@ -75,10 +76,13 @@ class ReviewerRepairLoopTests(unittest.TestCase):
     def test_ultra_builder_is_preserved_in_review_receipt(self):
         self.exercise_repair_loop(publish=False, effort="ultra")
 
+    def test_standalone_review_dispatches_geometry_on_first_report(self):
+        self.exercise_repair_loop(publish=False, category="spatial_structure")
+
     def test_timeout_preserves_thread_and_does_not_dispatch_repairs(self):
         self.exercise_repair_loop(publish=False, timeout_failure=True)
 
-    def exercise_repair_loop(self, *, publish, effort="high", timeout_failure=False):
+    def exercise_repair_loop(self, *, publish, effort="high", timeout_failure=False, category="segmentation"):
         script = Path(__file__).resolve().parents[2] / "scripts/review_reconstruction.py"
         spec = importlib.util.spec_from_file_location("review_reconstruction_loop_test", script)
         module = importlib.util.module_from_spec(spec)
@@ -138,7 +142,7 @@ class ReviewerRepairLoopTests(unittest.TestCase):
                 review = {**review_fixture(), "candidate_id": str(len(reviews))}
                 if not reviews:
                     review.update(verdict="revise", issues=[{"id": "boundary", "object_id": "bed", "view_id": "front",
-                        "category": "segmentation", "region": [0, 0, 1, 1], "severity": "major",
+                        "category": category, "region": [0, 0, 1, 1], "severity": "major",
                         "evidence": "neighbor is fused into bed", "acceptance_criterion": "separate editable geometry"}])
                 else:
                     review["resolved_issue_ids"] = ["boundary"]
@@ -172,6 +176,10 @@ class ReviewerRepairLoopTests(unittest.TestCase):
             self.assertEqual(waited, ["repair-feedback"])
             self.assertIn("逐物体精细重建", repairs[0])
             self.assertIn("modeling_report.json", repairs[0])
+            if category == "spatial_structure":
+                self.assertIn("局部几何重建任务", repairs[0])
+                tasks = json.loads((project / "repair_02/geometry_rebuild_tasks.json").read_text())
+                self.assertEqual(tasks["issues"][0]["id"], "boundary")
 
 
 def review_fixture():

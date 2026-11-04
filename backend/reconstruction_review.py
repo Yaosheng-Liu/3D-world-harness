@@ -90,16 +90,16 @@ def verify_files(project, files):
             raise ValueError(f"candidate evidence changed after freezing: {name}")
 
 
-def local_rebuild_issues(review, previous):
-    """Escalate major geometric issues retained across two consecutive reviews."""
-    categories = {"spatial_structure", "geometry", "silhouette"}
-    prior = {issue["id"] for issue in previous["issues"] if issue.get("category") in categories}
-    return [issue for issue in review["issues"] if issue["id"] in prior
-            and issue.get("category") in categories and issue["severity"] in {"blocking", "major"}]
+def local_rebuild_issues(review):
+    """Address major geometry on its first report, with structure before detail."""
+    priority = {"spatial_structure": 0, "geometry": 1, "silhouette": 2}
+    issues = [issue for issue in review["issues"] if issue.get("category") in priority
+              and issue["severity"] in {"blocking", "major"}]
+    return sorted(issues, key=lambda issue: (issue["severity"] != "blocking", priority[issue["category"]]))
 
 
 LOCAL_REBUILD_INSTRUCTIONS = """局部几何重建任务（优先于外观微调）：
-这些问题已在连续两次审核中保留。重新检验局部几何假设，允许替换错误网格、折面和连接关系，不能仅继续修改颜色、灯光或沿用错误轮廓。
+这些主要几何问题首次发现即在本轮处理。先修影响多个物体的空间关系，再修局部形状和轮廓；将共享原因的问题一起解决，但保留每条问题ID。重新检验局部几何假设，仅替换需要纠正的网格、折面和连接，保留已经正确的部分。
 1. 锁定现有相机、裁切和坐标。从原始多视角选择至少两个有平移视差、能看清真实边界的视角；记录具体角点/转折线、遮挡关系和像素位置，阴影边缘不当作实体边缘。缺少对应或基线时记录不确定性，不臆造凹凸。
 2. 对同一实体角点可用 world.py triangulate 测量三维位置：输入 [{"id":"corner","observations":[{"view_id":"source_20","pixel":[x,y]},{"view_id":"source_33","pixel":[x,y]}]}]，像素必须来自对应 reference_image 的实际尺寸，示例视角应替换为本候选的真实视角。命令为 python scripts/world.py --project PROJECT triangulate --receipt RECEIPT --landmarks LANDMARKS。结果保存为当前候选目录 landmark_fit.json，输入保存为 landmarks.json。检查重投影误差与视差；不修改相机，不将DA3当独立真值。
 3. 用少量可解释参数重建局部位置、朝向、尺寸及连接。平面结构可据角点拟合相交平面；曲面使用其自身边界/截面，不强行套用墙面。保留正确邻物体与稳定ID；照片不能烘焙到错误几何来掩盖问题。
@@ -112,11 +112,8 @@ def local_rebuild_prompt(project, review_path, model_dir):
     if not review_path:
         return ""
     path = project_file(project, review_path)
-    previous = path.parent / "previous_review.json"
-    if not previous.exists():  # First review has no earlier verdict to compare.
-        return ""
     review = read_json(path)
-    issues = local_rebuild_issues(review, read_json(project_file(project, previous)))
+    issues = local_rebuild_issues(review)
     if not issues:
         return ""
     tasks = {"candidate_id": review["candidate_id"], "review_path": str(path.relative_to(project)),

@@ -148,6 +148,9 @@ class ObjectPipelineTests(unittest.TestCase):
         self.review_calls.append(options)
         index = len(self.review_calls) - 1
         review = copy.deepcopy(self.reviews[min(index, len(self.reviews) - 1)])
+        review.setdefault("candidate_id", f"frozen-{index}")
+        for issue in review["issues"]:
+            issue.setdefault("severity", "major")
         relative = f"reconstruction/mock-review-{index + 1}/round_01"
         self.write(relative + "/review.json", review)
         return {"accepted": review["verdict"] == "accepted" and getattr(options, "publish_after_review", True), "summary": "mock review", "run_id": f"mock-review-{index + 1}",
@@ -505,25 +508,15 @@ class ObjectPipelineTests(unittest.TestCase):
                 self.execute(resume=result["run_id"])
                 self.assertEqual(self.order, ["review", "repair", "review", "repair"])
 
-    def test_repeated_geometry_is_sent_as_local_rebuild_without_extra_rounds(self):
+    def test_first_geometry_report_dispatches_local_rebuild_without_extra_rounds(self):
         issue = {"id": "chair-shape", "object_id": "chair", "category": "spatial_structure",
                  "severity": "major", "view_id": "source_1", "region": [0, 0, 1, 1],
                  "evidence": "front and side disagree", "acceptance_criterion": "fit both views"}
         self.reviews = [{"candidate_id": "frozen", "verdict": "revise", "issues": [issue], "resolved_issue_ids": []}]
-        first = self.execute(max_rounds=2, stop_after="feedback-modeling")
-
-        def review_with_history(options):
-            result = self.review_worker(options)
-            if options.previous_review:
-                self.write(result["review_directory"] + "/previous_review.json",
-                           MODULE.read_json(self.project / options.previous_review))
-            return result
-
-        before = len(self.review_calls)
-        with patch.object(MODULE, "review_candidate", side_effect=review_with_history):
-            result = self.execute(repair_from=first["run_id"], repair_cycles=1)
-        self.assertEqual(len(self.review_calls), before + 1)
-        self.assertEqual((result["reviews_completed"], result["repairs_completed"]), (1, 1))
+        result = self.execute(max_rounds=2, stop_after="feedback-modeling")
+        self.assertEqual((len(self.review_calls), len(self.build_calls)), (1, 2))
+        self.assertEqual(self.order, ["repair", "review", "repair"])
+        self.assertIsNone(self.review_calls[0].previous_review)
         self.assertEqual(result["stage"], "modeled")
         self.assertIn("局部几何重建任务", self.build_calls[-1]["prompt"])
         tasks = MODULE.read_json(self.project / Path(result["candidate_path"]).parent / "geometry_rebuild_tasks.json")

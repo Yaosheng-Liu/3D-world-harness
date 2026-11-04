@@ -135,6 +135,7 @@ def modeling_prompt(project, status, candidate, receipt, previous_review=None):
 分割记录：{project / status['segments_path']}
 观测几何：{project / status['geometry_path']}
 上轮审核：{previous_review or '无'}
+本轮按“整体空间关系→关键尺寸与轮廓→材质和灯光→小细节”推进，首次建模就先确定骨架。为关键结构选少量互补的原始视角，优先有平移视差、能看到侧面和遮挡边界的视角；用固定相机确定墙面折转、物体前后关系、连接及支撑位置。可先构建粗候选取得receipt，再调用 {sys.executable} {ROOT / 'scripts/world.py'} --project {project} triangulate --receipt <构建receipt> --landmarks <同名角点JSON> 测量坐标并检查重投影误差；曲面与无可靠角点处使用实际边界、截面和遮挡依据。把局部测量和几何修正集中在本次建模中完成，再细化外观；正式整套验收仍由审核Agent执行。返修时优先修共同几何原因，保留正确邻物体与既有细节，避免同一轮同时盲改几何、材质和灯光。
 {rebuild}
 空间建模可按需调用共享深度工具：{sys.executable} {ROOT / 'scripts/world.py'} --project {project} depth --receipt <当前构建receipt路径> [--frames 118 268]。使用实际缓存训练帧编号；默认取6个均匀分布视角。它复用固定DA3参考深度，读取当前Blender构建的几何，不需要渲染RGB或重跑DA3；报告列出原图、比较图及覆盖情况。图中蓝色=模型更近、红色=更远、灰色=未知/低置信度、紫色=模型缺面。结合多视角原图核对，镜面/玻璃尤其不能直接按深度改形状；不要重拟合参考尺度或改相机掩盖误差。可用它辅助建模，正式检查仍由审核阶段负责。上一轮inspection.json中的depth保存对应冻结候选的结果，不能当作当前模型已通过。
 审核目录inspection.json中的overlay_paths是同相机的原图/模型50%叠图；结合纯渲染和原图处理审核指出的重影、轮廓、部件位置、遮挡和纹理错位。叠图里的照片细节不代表模型已具备该细节，不能仅凭混合图验收。正式检查由审核Agent负责。
