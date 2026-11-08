@@ -1,0 +1,299 @@
+"""Fresh headless trials using the harness's existing planner and review core."""
+from __future__ import annotations
+
+import argparse
+from copy import deepcopy
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+
+from common import REPO, cli_usage, digest, matrix, read, write
+
+sys.path[:0] = [str(REPO / "backend"), str(REPO / "scripts")]
+from reconstruction_plan import MODEL_REPORT_SCHEMA, PLAN_SCHEMA
+from reconstruction_review import freeze_candidate, review_schema, validate_review, validate_fixed_views, verify_files
+from review_reconstruction import review_prompt
+from run_reconstruction import run_planner
+from world_build import build_world
+from world_evaluation import write_view_inspection
+from world_model import source_paths, validate_scene
+
+
+def environment(runtime, home):
+    env = dict(os.environ, CODEX_HOME=str(home), HTTP_PROXY=runtime["proxy"],
+               HTTPS_PROXY=runtime["proxy"], NO_PROXY="localhost,127.0.0.1,::1")
+    return env
+
+
+def agent(project, directory, runtime, role, home, prompt, *, images=(), thread=None, schema=None,
+          previous_usage=None, timeout=1800):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "prompt.txt").write_text(prompt)
+    final = directory / "response.json" if schema else directory / "response.txt"
+    argv = [runtime["codex"], "exec", "--ignore-user-config", "--skip-git-repo-check", "--json",
+            "-C", str(project), "-s", "read-only" if schema else "workspace-write",
+            "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=true",
+            "-m", role["model"], "-c", f'model_reasoning_effort="{role["effort"]}"',
+            "--output-last-message", str(final)]
+    if schema:
+        write(directory / "schema.json", schema)
+        argv += ["--output-schema", str(directory / "schema.json")]
+    if thread:
+        argv += ["resume"]
+    for image in images:
+        argv += ["--image", str(image)]
+    argv += [thread, "-"] if thread else ["-"]
+    started = time.time()
+    exit_code, error = None, None
+    events = directory / "events.jsonl"
+    with events.open("w") as output, (directory / "stderr.log").open("w") as errors:
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=output, stderr=errors,
+                                   env=environment(runtime, home), start_new_session=True)
+        write(directory / "process.json", {"pid": process.pid, "started_at": started,
+                                           "model": role["model"], "effort": role["effort"], "thread_id": thread})
+        try:
+            process.communicate(prompt.encode(), timeout=timeout)
+            exit_code = process.returncode
+        except subprocess.TimeoutExpired:
+            import signal
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=30)
+            error = f"timeout after {timeout}s"
+    usage = cli_usage(events)
+    raw_usage = dict(usage["usage"])
+    if thread:
+        if previous_usage is None:
+            raise ValueError("Resume usage requires the previous cumulative snapshot")
+        for key, value in raw_usage.items():
+            prior = previous_usage.get(key)
+            usage["usage"][key] = value-prior if value is not None and prior is not None else None
+            if usage["usage"][key] is not None and usage["usage"][key] < 0:
+                raise ValueError("Token counter decreased; cannot infer per-call usage")
+    result = {**usage, "role": role, "started_at": started, "seconds": time.time()-started,
+              "raw_cumulative_usage": raw_usage, "exit_code": exit_code, "error": error,
+              "prompt_sha256": digest(directory / "prompt.txt")}
+    write(directory / "usage.json", result)
+    if error or exit_code or usage["completed_turns"] != 1:
+        raise RuntimeError(f"Agent call failed; see {directory}")
+    return result
+
+
+def role_home(run, role, runtime):
+    home = run / "homes" / role
+    home.mkdir(parents=True, exist_ok=True)
+    auth = home / "auth.json"
+    if not auth.exists():
+        shutil.copyfile(Path(runtime["auth_home"]) / "auth.json", auth)
+        auth.chmod(0o600)
+    return home
+
+
+def initialize_run(root, run, spec, runtime):
+    shared = root / "shared" / spec["scene"]
+    source = shared / "project"
+    project = run / "project"
+    if project.exists():
+        raise ValueError("A new trial cannot reuse an existing project")
+    project.mkdir()
+    for name in ("observations",):
+        shutil.copytree(source / name, project / name)
+    for name in ("split_manifest.json", "calibration_audit.json", "training_contact_sheet.jpg"):
+        shutil.copyfile(source / name, project / name)
+    views = read(shared / "views.json")
+    if spec["condition"] != "single_basic":
+        for name in ("dense", "assets"):
+            shutil.copytree(source / name, project / name)
+        shutil.copyfile(source / "reconstruction_report.json", project / "reconstruction_report.json")
+        scene = read(source / "world/scene.json")
+    else:
+        scene = {"schema_version": 1, "revision": 1, "scene_id": spec["scene"], "name": spec["scene"],
+                 "units": "arbitrary", "up_axis": "Z", "provenance": {"kind": "reconstruction",
+                 "description": "RGB/camera-only schema stub; replace the tiny off-scene example object.",
+                 "sources": [{"path":"observations/manifest.json", "description":"Frozen input images"}]},
+                 "objects": [{"id":"schema_example", "name":"Schema example; remove", "parent_id":None,
+                 "position":[10000,10000,10000], "rotation":[0,0,0], "visual":[{"type":"box","size":[.001,.001,.001]}],
+                 "collision":[{"type":"box","size":[.001,.001,.001]}],
+                 "material":{"base_color":[.5,.5,.5,1],"roughness":.8,"metallic":0},
+                 "physics":{"body_type":"static","mass":0,"friction":.5},
+                 "evidence":{"geometry":"estimated","physics":"estimated","notes":"Schema only"}}]}
+    scene["views"] = views
+    write(project / "world/scene.json", scene)
+    write(project / "experiment.json", spec)
+    write(project / "edit_task_targets.json", read(root / "protocol.json")["edit_targets"][spec["scene"]])
+    write(project / "tool_runtime.json", {k: runtime[k] for k in
+          ("da3_code","geometry_image","segmentation_image","sam_code","sam_weights","blender")})
+    write(project / "plan_schema.json", PLAN_SCHEMA)
+    (project / "AGENTS.md").write_text(f"""# Experiment task packet
+Only read this project and generic implementation at {REPO}. Do not read experiment siblings, old models, source dataset directories, private evaluation images or other agents' sessions. No web/asset download or additional agent delegation. Physics is deferred.
+Input: observations/manifest.json, images, training_contact_sheet.jpg. Six calibrated validation cameras are in world/scene.json and must remain unchanged. The schema-only object (if present) is not scene geometry. Separate visible objects and give stable IDs. Captured appearance may use only supplied images; no camera-facing photo planes. Unseen geometry must be marked estimated.
+Scene JSON format: follow world/scene.json and {REPO}/backend/world_model.py. Common build command: python3 {Path(__file__).with_name('tools.py')} --project {project} build --scene <candidate.json>. It writes build_receipt.json next to the candidate. Save new scripts and assets inside each checkpoint's model directory; preserve prior checkpoints and inputs. Maximum 256 objects and 1,000,000 visual triangles. Do not modify implementation or experiment records.
+Common editing tasks are listed in edit_task_targets.json. Next to each candidate write edit_targets.json mapping each listed key to the corresponding scene object ID, or null if the target is missing or unresolved. This declaration will be independently inspected; naming an object is not evidence of correct ownership.
+Specialist tools are enabled only for tool conditions: use tools.py segment --plan <plan.json> --output <new-dir>; geometry --plan <plan.json> --segments <segments.json> --output <new-dir>; depth --receipt <build_receipt.json>; triangulate --receipt <receipt> --landmarks <landmarks.json>. A self-authored plan must follow plan_schema.json. Do not run specialist tools in single_basic. Tools do not certify reconstruction correctness.
+""")
+    validate_scene(scene, project)
+    protected = [p for p in (project / "observations").rglob("*") if p.is_file()]
+    protected += [project / name for name in ("split_manifest.json", "calibration_audit.json",
+                  "training_contact_sheet.jpg", "world/scene.json", "experiment.json", "AGENTS.md",
+                  "edit_task_targets.json", "tool_runtime.json")]
+    write(run / "input_hashes.json", {str(p.relative_to(project)): digest(p) for p in protected})
+    return project
+
+
+def planning(project, run, runtime, protocol):
+    home = role_home(run, "planner", runtime)
+    previous = {k: os.environ.get(k) for k in ("HTTP_PROXY","HTTPS_PROXY","NO_PROXY")}
+    os.environ.update({k: environment(runtime, home)[k] for k in previous})
+    role = {**protocol["planner"], "codex": runtime["codex"], "home": str(home)}
+    started = time.time()
+    try:
+        relative, plan = run_planner(project, project / "evidence/plan", {"planner":role,
+                           "planner_timeout":protocol["planner_timeout_seconds"]})
+    finally:
+        for k, v in previous.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    usage = cli_usage(project / "evidence/plan/events.jsonl")
+    write(run / "planner_usage.json", {**usage,"seconds":time.time()-started,"role":protocol["planner"]})
+    toolbox = Path(__file__).with_name("tools.py")
+    for op, extra in (("segment",[]), ("geometry",["--segments","evidence/segments/segments.json"])):
+        output = "evidence/segments" if op == "segment" else "evidence/geometry"
+        subprocess.run([sys.executable,str(toolbox),"--project",str(project),op,"--plan",relative,
+                        "--output",output,*extra],check=True,timeout=3600)
+    return relative
+
+
+def freeze_checkpoint(project, directory, candidate, receipt):
+    directory.mkdir(parents=True, exist_ok=True)
+    scene = validate_scene(read(project / candidate), project)
+    validate_fixed_views(project, scene)
+    build = read(project / receipt)
+    frozen = directory / "sources"
+    for name in source_paths(scene):
+        destination = frozen / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(project / name, destination)
+    for key, suffix in (("blend_path","blend"),("glb_path","glb")):
+        shutil.copyfile(build[key], directory / f"scene.{suffix}")
+    write(directory / "scene.json", scene)
+    write(directory / "receipt.json", build)
+    shutil.copyfile((project / candidate).parent / "edit_targets.json", directory / "edit_targets.json")
+    files = {str(f.relative_to(directory)): digest(f) for f in directory.rglob("*") if f.is_file()}
+    write(directory / "frozen.json", {"scene_hash":build["scene_hash"],"files":files})
+    return scene, build
+
+
+def run_trial(root, spec, runtime, protocol):
+    identifier = f"{spec['scene']}__{spec['condition']}__{spec['model']}__{spec['effort']}"
+    run = root / "runs" / identifier
+    run.mkdir(parents=True, exist_ok=False)
+    write(run / "spec.json", spec)
+    state = {"id":identifier,"spec":spec,"stage":"preparing","started_at":time.time(),"checkpoints":[]}
+    def update(stage, **fields):
+        state.update(stage=stage,updated_at=time.time(),**fields)
+        write(run / "status.json", state)
+    try:
+        project = initialize_run(root, run, spec, runtime)
+        plan = None
+        if spec["condition"] == "harness_tools":
+            update("planning")
+            plan = planning(project, run, runtime, protocol)
+        thread, previous, previous_usage = None, None, None
+        for checkpoint in range(protocol["modeling_passes"]):
+            model_dir = project / "models" / f"M{checkpoint}"
+            model_dir.mkdir(parents=True)
+            write(model_dir / "modeling_report_schema.json", MODEL_REPORT_SCHEMA)
+            candidate = str((model_dir / "candidate.json").relative_to(project))
+            receipt = str((model_dir / "build_receipt.json").relative_to(project))
+            prompt = protocol["input_prompt"] if checkpoint == 0 else protocol["repair_prompt"]
+            prompt += f"\n输出 {candidate}（revision=2）及同目录 build_receipt.json；基本说明见 AGENTS.md。"
+            if plan:
+                prompt += (f"\n初始化计划 {plan}；分割 evidence/segments/segments.json；几何 evidence/geometry/geometry.json。"
+                           f"逐项处理物体和未解释区域；输出同目录 modeling_report.json，遵循 modeling_report_schema.json。")
+            if previous:
+                prompt += f"\n本次审核意见：{previous}。保留旧问题ID并按对应原图修复。"
+            if checkpoint:
+                prompt += f"\n前一候选 models/M{checkpoint-1}/candidate.json；依据原图自检或审核反馈修订。"
+            update("modeling",checkpoint=checkpoint)
+            usage = agent(project,run/f"calls/model_M{checkpoint}",runtime,
+                          {"model":spec["model"],"effort":spec["effort"]},role_home(run,"modeler",runtime),
+                          prompt,images=[project/"training_contact_sheet.jpg"],thread=thread,
+                          previous_usage=previous_usage,
+                          timeout=protocol["modeling_timeout_seconds"][checkpoint])
+            verify_files(project, read(run / "input_hashes.json"))
+            thread = usage["thread_id"] or thread
+            previous_usage = usage["raw_cumulative_usage"]
+            if not (project / receipt).exists():
+                build = build_world(project,scene=read(project/candidate),render=True,timeout=900)
+                write(project/receipt,build)
+            scene, build = freeze_checkpoint(project,run/f"checkpoints/M{checkpoint}",candidate,receipt)
+            state["checkpoints"].append({"name":f"M{checkpoint}","candidate":candidate,
+                                          "receipt":receipt,"objects":len(scene["objects"]),"usage":usage["usage"]})
+            update("checkpoint_frozen",checkpoint=checkpoint,thread_id=thread)
+            if checkpoint == 2:
+                continue
+            if plan:
+                update("reviewing",checkpoint=checkpoint)
+                frozen = project / f"reviews/R{checkpoint+1}"
+                manifest = freeze_candidate(project,candidate,receipt,frozen,blender=runtime["blender"],
+                    previous_review=project/previous if previous else None,plan_path=plan,
+                    segments_path="evidence/segments/segments.json",geometry_path="evidence/geometry/geometry.json",
+                    modeling_report_path=str((model_dir/"modeling_report.json").relative_to(project)))
+                inspection, edit = read(frozen/"inspection.json"), read(frozen/"editability.json")
+                images = (inspection["inspection_paths"] + inspection.get("overlay_paths",[]) +
+                          inspection["depth"].get("inspection_paths",[]) + manifest.get("source_inspection_paths",[]) +
+                          edit.get("inspection_paths",[]))
+                images = [project/str(x) for x in images]
+                result = agent(project,run/f"calls/review_R{checkpoint+1}",runtime,protocol["reviewer"],
+                    role_home(run,"reviewer",runtime),review_prompt(project,frozen,project/previous if previous else None),
+                    images=images,schema=review_schema(manifest),timeout=protocol["review_timeout_seconds"])
+                report = read(run/f"calls/review_R{checkpoint+1}/response.json")
+                verify_files(project,manifest["files"])
+                validate_review(manifest,report,read(project/previous) if previous else None)
+                write(frozen/"review.json",report)
+                previous = str((frozen/"review.json").relative_to(project))
+            else:
+                inspection = write_view_inspection(project,scene,build)
+                # Self-inspection is part of the following model turn, not a new reviewer.
+                previous = str((model_dir/"self_inspection.json").relative_to(project))
+                write(project/previous,inspection)
+        update("modeled",seconds=time.time()-state["started_at"],final_review="not_run_by_protocol")
+    except Exception as error:
+        update("failed",error=str(error),seconds=time.time()-state["started_at"])
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root",type=Path,required=True)
+    parser.add_argument("--runtime",type=Path,required=True)
+    parser.add_argument("--scene")
+    parser.add_argument("--model")
+    parser.add_argument("--condition")
+    parser.add_argument("--effort")
+    args = parser.parse_args()
+    protocol,runtime = read(args.root/"protocol.json"),read(args.runtime)
+    failures=[]
+    for name in protocol["scenes"]:
+        if args.scene and args.scene!=name:
+            continue
+        for row in matrix(protocol):
+            if any(getattr(args,k) and getattr(args,k)!=row[k] for k in ("model","condition","effort")):
+                continue
+            spec={"scene":name,**row,"protocol_sha256":digest(args.root/"protocol.json")}
+            identifier=f"{name}__{row['condition']}__{row['model']}__{row['effort']}"
+            if (args.root/"runs"/identifier).exists():
+                continue
+            try:
+                run_trial(args.root,spec,runtime,protocol)
+            except Exception as error:
+                failures.append({"id":identifier,"error":str(error)})
+                write(args.root/"failures.json",failures)
+
+
+if __name__ == "__main__":
+    main()

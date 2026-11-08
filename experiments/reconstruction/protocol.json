@@ -1,0 +1,64 @@
+{
+  "id": "worldharness_20261109",
+  "seed": 20261109,
+  "scenes": {
+    "bedroom": "05c8b23b4c3a186d81efad50fd82be9841b694b5edd818f6f23619a494936746",
+    "study": "2a5ccbce81ab8efb598bc864df36787e3cdbd329c2e365a4170af32a01b33007",
+    "gallery": "de8a78598a8ec407493ff57505beacfdd5072d1a4dbbc124a57924402bbf7503"
+  },
+  "models": ["gpt-6-astra", "gpt-6.1-sol"],
+  "conditions": ["single_basic", "single_tools", "harness_tools"],
+  "main_effort": "ultra",
+  "ablation_effort": "high",
+  "planner": {"model": "gpt-6-astra", "effort": "high"},
+  "reviewer": {"model": "gpt-6.1-sol", "effort": "ultra"},
+  "modeling_passes": 3,
+  "review_passes": 2,
+  "modeling_timeout_seconds": [1800, 900, 900],
+  "review_timeout_seconds": 1200,
+  "planner_timeout_seconds": 900,
+  "training_frames": 48,
+  "validation_frames": 6,
+  "test_centers": 12,
+  "test_support_radius": 6,
+  "da3_resolution": 756,
+  "test_render_samples": 32,
+  "test_denoiser": "OpenImageDenoise 2.5.1, linear color/albedo/normal passes; same evaluator for all conditions",
+  "test_render_width": 640,
+  "initialization_mesh": "Neutral TSDF observations capped at 300000 faces by quadric decimation; no photo atlas or surface completion. Coverage losses are reported as diagnostic limitations of provisional evidence. Fixed for all tool conditions before formal trials.",
+  "max_objects": 256,
+  "max_triangles": 1000000,
+  "repetitions": 1,
+  "input_prompt": "根据提供的多视角图像和相机信息，在 Blender 中重建场景。物体应可独立编辑，尽量匹配真实几何、布局、材质和外观，保存建模源码和场景工程。",
+  "repair_prompt": "检查当前场景与参考图像，修正发现的问题并提交新版本。",
+  "geometry_reference": "Independent withheld three-view SIFT triangulation; sparse pseudo-reference, not scan ground truth.",
+  "isolation": "Fresh model thread and per-run CODEX_HOME. Workspace-write sandbox; experiment access restrictions are task instructions, not a read-isolation security boundary.",
+  "initialization_cost": "Fresh per-scene deterministic DA3/TSDF computation shared by tool conditions; report cold-start cost once per run and separately disclose shared execution.",
+  "early_acceptance": "Complete the fixed M0/R1/M1/R2/M2 schedule even if a reviewer accepts; no third reviewer. Preserve failures without replacing them with extra modeling passes.",
+  "test_access": "Private evaluation inputs are excluded from agent task packets and tool containers. Agents must not inspect experiment siblings, prior reconstructions, or source dataset directories.",
+  "edit_tasks": ["translate", "rotate", "uniform_scale", "hide", "material"],
+  "edit_targets": {
+    "bedroom": {
+      "main_bed_frame": "蓝色主床床架，不包含床垫、床品和相邻床头柜",
+      "blue_pillow": "蓝色主床上最靠近相机的蓝色枕头",
+      "bedside_lamp": "蓝色主床床头柜上、靠近相机的台灯",
+      "coffee_table": "蓝色沙发前带抽屉的白色茶几",
+      "tan_lounge_chair": "蓝色沙发旁的棕黄色休闲椅，不包含脚凳"
+    },
+    "study": {
+      "reference_chair": "训练帧000010.png中离相机最近的可见蓝灰色椅子",
+      "reference_desktop": "与上述椅子对应的白色桌面",
+      "reference_partition": "与上述桌面邻接、离相机最近的木隔板",
+      "red_seat": "房间远端的红色软包座椅",
+      "gray_door": "自习区尽头的灰色门扇"
+    },
+    "gallery": {
+      "reference_plinth": "训练帧000000.png中最近的独立白色展台",
+      "reference_shelf": "训练帧000000.png右侧最近的壁挂白色小托台",
+      "shelf_ceramics": "上述小托台上的陶件组合，不包含托台",
+      "purple_sign": "墙上的紫色文字展牌",
+      "wooden_door": "木框玻璃门，不包含周围墙面"
+    }
+  },
+  "limitations": ["Single repetition per scene and condition is exploratory, not a variance-controlled final benchmark.", "The bedroom is a repeatedly inspected development scene and the other two scene identities were used in an older study; all new modeling contexts and artifacts start from raw inputs."]
+}

@@ -471,7 +471,7 @@ def textured_obj(mesh, dense, source_info, manifest, output: Path, voxel):
 
 
 
-def fuse(source: Path, output: Path) -> None:
+def fuse(source: Path, output: Path, *, observations_only: bool = False) -> None:
     import numpy as np
     import open3d as o3d
     data, manifest = source_data(source, output)
@@ -518,8 +518,11 @@ def fuse(source: Path, output: Path) -> None:
     (output / 'intermediate').mkdir(exist_ok=True)
     pre_simplification = output / 'intermediate/tsdf_pre_simplification.ply'
     o3d.io.write_triangle_mesh(str(pre_simplification), mesh)
-    cluster_size = 6 * voxel
-    mesh = mesh.simplify_vertex_clustering(cluster_size)
+    cluster_size = 0 if observations_only else 6 * voxel
+    if observations_only and len(mesh.triangles) > 300000:
+        mesh = mesh.simplify_quadric_decimation(300000)
+    elif cluster_size:
+        mesh = mesh.simplify_vertex_clustering(cluster_size)
     faces = np.asarray(mesh.triangles)
     mesh.triangles = o3d.utility.Vector3iVector(faces[unique_triangle_indices(faces)])
     mesh.remove_degenerate_triangles()
@@ -529,7 +532,7 @@ def fuse(source: Path, output: Path) -> None:
     after = training_surface_hits(mesh, data, manifest['train_indices'])
     audit = simplification_audit(before, after, manifest['train_indices'])
     write_json(output / 'simplification_audit.json', audit)
-    if not audit['passed']:
+    if not audit['passed'] and not observations_only:
         raise ValueError('Simplification exceeds the training coverage loss limit; see audit')
     lineage = {
         'kind': 'full_reconstruction',
@@ -537,7 +540,8 @@ def fuse(source: Path, output: Path) -> None:
         'simplification_audit_sha256': digest(output / 'simplification_audit.json'),
     }
     export_reconstruction(mesh, dense, data, manifest, output, voxel, stats,
-                          triangles_before, started, cluster_size, lineage)
+                          triangles_before, started, cluster_size, lineage,
+                          observations_only=observations_only)
 
 
 def training_surface_hits(mesh, data, indices):
@@ -598,7 +602,7 @@ def unique_triangle_indices(triangles):
 
 
 def export_reconstruction(mesh, dense, data, manifest, output, voxel, stats,
-                          triangles_before, started, cluster_size, lineage):
+                          triangles_before, started, cluster_size, lineage, *, observations_only=False):
     import numpy as np
     import open3d as o3d
     prepared_hash = prepared_inputs(output, manifest)
@@ -614,14 +618,26 @@ def export_reconstruction(mesh, dense, data, manifest, output, voxel, stats,
     print('CLEANED_TOPOLOGY', duplicate_count, 'duplicates,',
           degenerate_count, 'degenerate faces removed', flush=True)
     (output / 'assets').mkdir(exist_ok=True)
-    texture = textured_obj(mesh, dense, data, manifest, output, voxel)
+    if observations_only:
+        o3d.io.write_triangle_mesh(str(output / 'assets/observed_environment.obj'), mesh,
+                                  write_vertex_colors=False, write_triangle_uvs=False)
+        faces = np.asarray(mesh.triangles)
+        edges = np.sort(np.concatenate((faces[:, [0,1]], faces[:, [1,2]], faces[:, [2,0]])), axis=1)
+        _, counts = np.unique(edges, axis=0, return_counts=True)
+        texture = {'triangles': len(faces), 'vertices': len(mesh.vertices),
+                   'textured_face_fraction': 0., 'textured_area_fraction': 0.,
+                   'boundary_edges': int((counts == 1).sum())}
+    else:
+        texture = textured_obj(mesh, dense, data, manifest, output, voxel)
     o3d.io.write_triangle_mesh(str(output / 'assets/observed_surface.ply'), mesh)
     if prepared_inputs(output, manifest) != prepared_hash:
         raise ValueError('Prepared input manifest changed during texture generation')
     # Keep the supplied world frame: Z is not inferred to be gravity. Identity is explicit.
     report = {
         'scene_id': source_id,
-        'method': 'Known-camera DA3, multi-view consistency, TSDF, visibility-tested RGB atlas',
+        'method': ('Known-camera DA3, multi-view consistency, budgeted neutral TSDF observations'
+                   if observations_only else
+                   'Known-camera DA3, multi-view consistency, TSDF, visibility-tested RGB atlas'),
         'units': 'arbitrary', 'metric_scale': None,
         'source_to_world': np.eye(4).tolist(),
         'up_axis_note': 'Source coordinates retained; scene Z is a display convention, not gravity.',
@@ -636,7 +652,8 @@ def export_reconstruction(mesh, dense, data, manifest, output, voxel, stats,
         'calibration': json.loads((output / 'calibration_audit.json').read_text()),
         'voxel_size_dataset_units': voxel,
         'triangles_before_simplification': triangles_before,
-        'simplification_method': 'Vertex clustering at six TSDF voxels; no QEM or hole filling',
+        'simplification_method': ('Quadric decimation capped at 300000 faces; provisional observation evidence' if observations_only else
+                                  'Vertex clustering at six TSDF voxels; no QEM or hole filling'),
         'vertex_cluster_size_dataset_units': cluster_size,
         'geometry_lineage': lineage,
         'topology_cleanup': {'duplicate_faces_removed': duplicate_count,
@@ -649,7 +666,8 @@ def export_reconstruction(mesh, dense, data, manifest, output, voxel, stats,
                     'source_candidate_fusion_seconds': lineage['source_candidate_fusion_seconds']}),
         'object_segmentation': 'not_performed; one editable observed_environment mesh',
         'physics': 'not_calibrated; disabled for arbitrary units',
-        'appearance': 'captured illumination, not intrinsic albedo',
+        'appearance': ('neutral observation geometry; no photo atlas' if observations_only else
+                       'captured illumination, not intrinsic albedo'),
         'heldout_evaluation_at_reconstruction': (
             'Not run yet; evaluation is recorded separately after freezing. '
             'No heldout RGB used for reconstruction.'),
@@ -708,6 +726,12 @@ def export_reconstruction(mesh, dense, data, manifest, output, voxel, stats,
         }],
         'views': views,
     }
+    if observations_only:
+        scene['objects'][0]['material'].pop('base_color_texture')
+        scene['objects'][0]['material']['appearance'] = 'surface'
+        scene['provenance']['description'] = (
+            'Real RGB and supplied SfM cameras. Uncalibrated dataset scale. '
+            'Raw neutral TSDF observations; object segmentation and physical calibration pending.')
     write_json(output / 'world/scene.json', scene)
     write_json(output / 'initialization/scene.json', scene)
     summary_keys = ('triangles', 'vertices', 'textured_face_fraction',
@@ -722,6 +746,8 @@ def main():
     parser.add_argument('--stage', choices=('prepare', 'infer', 'fuse', 'all'), default='all')
     parser.add_argument('--model', type=Path, default=Path('/opt/da3/checkpoints/DA3NESTED-GIANT-LARGE'))
     parser.add_argument('--resolution', type=int, default=756)
+    parser.add_argument('--observations-only', action='store_true',
+                        help='Export provisional neutral TSDF observations capped at 300000 faces, without a photo atlas')
     args = parser.parse_args()
     if (args.output / 'world/scene.json').exists():
         raise FileExistsError('An initialized world already exists; reconstruct into a new project')
@@ -731,7 +757,7 @@ def main():
     if args.stage in ('infer', 'all'):
         infer(args.scene, args.output, args.model, args.resolution)
     if args.stage in ('fuse', 'all'):
-        fuse(args.scene, args.output)
+        fuse(args.scene, args.output, observations_only=args.observations_only)
 
 
 if __name__ == '__main__':
