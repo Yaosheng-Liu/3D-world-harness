@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import fcntl
 import json
 from pathlib import Path
@@ -99,7 +100,8 @@ def tick(root, runtime):
     for action in actions:
         with (root / "monitor_actions.jsonl").open("a") as stream:
             stream.write(json.dumps(action) + "\n")
-    lines = ["# 实验监控", "", f"检查时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(state['updated_at']))}",
+    checked_at = datetime.fromtimestamp(state["updated_at"], timezone(timedelta(hours=8)))
+    lines = ["# 实验监控", "", f"检查时间：{checked_at:%Y-%m-%d %H:%M:%S} UTC+08:00",
              f"阶段：{state['outcome']}；已结束 {state['terminal_trials']}/{state['expected_trials']} 次试验；"
              f"已评测 {state['evaluated_checkpoints']} 个版本，待评测 {len(state['pending_evaluations'])} 个。", "",
              f"记录问题 {len(state['issues'])} 项；剩余磁盘 {state['free_disk_bytes']/2**30:.1f} GiB。", "",
@@ -107,7 +109,7 @@ def tick(root, runtime):
              "失败模型调用和评测错误保留；未完成检查点不计成功。语义编辑归属仍单独核验。"]
     if state["issues"]:
         lines += ["", "待处理记录：", *[f"- {issue}" for issue in state["issues"]]]
-    (root / "MONITOR.md").write_text("\n\n".join(lines) + "\n")
+    (root / "MONITOR.md").write_text("\n".join(lines) + "\n")
     if state["automated_finished"]:
         write(root / "automatic_completion.json", {k: v for k, v in state.items() if k != "trials"})
     return state
