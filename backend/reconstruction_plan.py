@@ -239,7 +239,7 @@ Splits, merges and exclusions remain visible to the independent critic.
         raise ModelingReportError(f"modeling report {location}: {exc.message[:240]}") from exc
     if report["plan_sha256"] != file_hash(project_file(project, plan_path)):
         raise ModelingReportError("modeling report belongs to another initialization plan")
-    planned = {obj["id"]: obj for obj in plan["objects"] if obj["kind"] != "group"}
+    planned = {obj["id"]: obj for obj in plan["objects"]}
     actual = {obj["id"] for obj in scene["objects"]}
     training = {row["index"] for row in read_json(project_file(project, "observations/manifest.json"))["train"]}
     seen_objects, seen_regions, unresolved = set(), set(), []
@@ -268,7 +268,8 @@ Splits, merges and exclusions remain visible to the independent critic.
                 raise ModelingReportError(f"modeling report {kind}/{key}: excluded evidence must not claim candidate objects")
             if row["resolution"] == "unresolved":
                 unresolved.append({"kind": kind, "id": key})
-    missing = sorted(planned.keys() - seen_objects)
+    required = {key for key, obj in planned.items() if obj["kind"] != "group"}
+    missing = sorted(required - seen_objects)
     regions = sorted(set(range(len(plan["unexplained_regions"]))) - seen_regions)
     return {"passed": not missing and not regions and not unresolved,
             "missing_objects": missing, "unaddressed_regions": regions,

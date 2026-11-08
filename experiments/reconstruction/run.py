@@ -9,8 +9,10 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
-from common import REPO, camera_manifest, cli_usage, digest, matrix, read, write
+from common import (REPO, bind_candidate_sources, camera_manifest, cli_usage, digest,
+                    matrix, read, thread_usage, write)
 
 sys.path[:0] = [str(REPO / "backend"), str(REPO / "scripts")]
 from reconstruction_plan import MODEL_REPORT_SCHEMA, PLAN_SCHEMA
@@ -46,6 +48,9 @@ def agent(project, directory, runtime, role, home, prompt, *, images=(), thread=
     for image in images:
         argv += ["--image", str(image)]
     argv += [thread, "-"] if thread else ["-"]
+    unit = "worldharness-" + uuid.uuid4().hex
+    argv = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit", unit,
+            "--property=TimeoutStopSec=5s", "--", *argv]
     started = time.time()
     exit_code, error = None, None
     events = directory / "events.jsonl"
@@ -53,16 +58,20 @@ def agent(project, directory, runtime, role, home, prompt, *, images=(), thread=
         process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=output, stderr=errors,
                                    env=environment(runtime, home), start_new_session=True)
         write(directory / "process.json", {"pid": process.pid, "started_at": started,
-                                           "model": role["model"], "effort": role["effort"], "thread_id": thread})
+                                           "model": role["model"], "effort": role["effort"],
+                                           "thread_id": thread, "scope": unit + ".scope"})
         try:
             process.communicate(prompt.encode(), timeout=timeout)
             exit_code = process.returncode
         except subprocess.TimeoutExpired:
-            import signal
-            os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=30)
+            subprocess.run(["systemctl", "--user", "stop", unit + ".scope"], check=True, timeout=15)
+            exit_code = process.wait(timeout=30)
             error = f"timeout after {timeout}s"
     usage = cli_usage(events)
+    snapshot = thread_usage(home, usage["thread_id"] or thread) if usage["thread_id"] or thread else {}
+    for key, value in usage["usage"].items():
+        if value is None and key in snapshot:
+            usage["usage"][key] = snapshot[key]
     raw_usage = dict(usage["usage"])
     if thread:
         if previous_usage is None:
@@ -74,6 +83,8 @@ def agent(project, directory, runtime, role, home, prompt, *, images=(), thread=
                 raise ValueError("Token counter decreased; cannot infer per-call usage")
     result = {**usage, "role": role, "started_at": started, "seconds": time.time()-started,
               "raw_cumulative_usage": raw_usage, "exit_code": exit_code, "error": error,
+              "deadline_reached": error is not None,
+              "usage_measurement": "last_reported_snapshot_lower_bound" if error else "completed_turn",
               "prompt_sha256": digest(directory / "prompt.txt")}
     write(directory / "usage.json", result)
     if error or exit_code or usage["completed_turns"] != 1:
@@ -132,12 +143,15 @@ def initialize_run(root, run, spec, runtime):
     (project / "AGENTS.md").write_text(f"""# Experiment task packet
 Only read this project and generic implementation at {REPO}. Do not read experiment siblings, old models, source dataset directories, private evaluation images or other agents' sessions. No web/asset download or additional agent delegation. Physics is deferred.
 Input: observations/manifest.json, images, cameras.json (all training and validation poses), training_contact_sheet.jpg. Preserve these inputs and world/scene.json. Six calibrated validation cameras in world/scene.json must remain unchanged in every candidate. The schema-only object (if present) is not scene geometry. Separate visible objects and give stable IDs. Captured appearance may use only supplied images; no camera-facing photo planes. Unseen geometry must be marked estimated.
-Scene JSON format: follow world/scene.json and {REPO}/backend/world_model.py. Common build command: python3 {Path(__file__).with_name('tools.py')} --project {project} build --scene <candidate.json>. It writes build_receipt.json next to the candidate. Save new scripts and assets inside each checkpoint's model directory; preserve prior checkpoints and inputs. Maximum 256 objects and 1,000,000 visual triangles. Do not modify implementation or experiment records.
+Scene JSON format: follow world/scene.json and {REPO}/backend/world_model.py. Save candidate.json, edit_targets.json, scripts and assets early inside each checkpoint's model directory. Finish your turn within its time budget. The controller builds and validates your saved candidate after the turn; no self-written receipt is required. Optional preview: python3 {Path(__file__).with_name('tools.py')} --project {project} build --scene <candidate.json>. Preserve prior checkpoints, inputs, world coordinates and units. Maximum 256 objects and 1,000,000 visual triangles. Do not modify implementation or experiment records.
 Common editing tasks are listed in edit_task_targets.json. Next to each candidate write edit_targets.json mapping each listed key to the corresponding scene object ID, or null if the target is missing or unresolved. This declaration will be independently inspected; naming an object is not evidence of correct ownership.
 Specialist tools are enabled only for tool conditions: use tools.py segment --plan <plan.json> --output <new-dir>; geometry --plan <plan.json> --segments <segments.json> --output <new-dir>; depth --receipt <build_receipt.json>; triangulate --receipt <receipt> --landmarks <landmarks.json>. A self-authored plan must follow plan_schema.json. Do not run specialist tools in single_basic. Tools do not certify reconstruction correctness.
 """)
     validate_scene(scene, project)
     protected = [p for p in (project / "observations").rglob("*") if p.is_file()]
+    if spec["condition"] != "single_basic":
+        protected += [p for name in ("dense", "assets") for p in (project / name).rglob("*") if p.is_file()]
+        protected.append(project / "reconstruction_report.json")
     protected += [project / name for name in ("split_manifest.json", "calibration_audit.json",
                   "training_contact_sheet.jpg", "cameras.json", "world/scene.json", "experiment.json", "AGENTS.md",
                   "edit_task_targets.json", "tool_runtime.json")]
@@ -218,12 +232,16 @@ def run_trial(root, spec, runtime, protocol):
             candidate = str((model_dir / "candidate.json").relative_to(project))
             receipt = str((model_dir / "build_receipt.json").relative_to(project))
             prompt = protocol["input_prompt"] if checkpoint == 0 else protocol["repair_prompt"]
-            prompt += f"\n输出 {candidate}（revision=2）及同目录 build_receipt.json；基本说明见 AGENTS.md。"
+            budget = protocol["modeling_timeout_seconds"][checkpoint]
+            prompt += (f"\n输出 {candidate}（revision=2）及同目录 edit_targets.json；基本说明见 AGENTS.md。"
+                       f"本次建模预算 {budget} 秒，须在预算内保存候选并结束本次调用。最终构建与程序校验由控制器完成。")
             if plan:
                 prompt += (f"\n初始化计划 {plan}；分割 evidence/segments/segments.json；几何 evidence/geometry/geometry.json。"
                            f"逐项处理物体和未解释区域；输出同目录 modeling_report.json，遵循 modeling_report_schema.json。")
-            if previous:
+            if previous and plan:
                 prompt += f"\n本次审核意见：{previous}。保留旧问题ID并按对应原图修复。"
+            elif previous:
+                prompt += f"\n自检材料：{previous}。打开其中原图、纯渲染和叠图，对照后自行修订。"
             if checkpoint:
                 prompt += f"\n前一候选 models/M{checkpoint-1}/candidate.json；依据原图自检或审核反馈修订。"
             update("modeling",checkpoint=checkpoint)
@@ -231,13 +249,14 @@ def run_trial(root, spec, runtime, protocol):
                           {"model":spec["model"],"effort":spec["effort"]},role_home(run,"modeler",runtime),
                           prompt,images=[project/"training_contact_sheet.jpg"],thread=thread,
                           previous_usage=previous_usage,
-                          timeout=protocol["modeling_timeout_seconds"][checkpoint])
+                          timeout=budget)
             verify_files(project, read(run / "input_hashes.json"))
             thread = usage["thread_id"] or thread
             previous_usage = usage["raw_cumulative_usage"]
-            if not (project / receipt).exists():
-                build = build_world(project,scene=read(project/candidate),render=True,timeout=900)
-                write(project/receipt,build)
+            scene = bind_candidate_sources(project, candidate)
+            validate_fixed_views(project, scene)
+            build = build_world(project, scene=scene, render=True, timeout=900)
+            write(project/receipt, build)
             scene, build = freeze_checkpoint(project,run/f"checkpoints/M{checkpoint}",candidate,receipt)
             state["checkpoints"].append({"name":f"M{checkpoint}","candidate":candidate,
                                           "receipt":receipt,"objects":len(scene["objects"]),"usage":usage["usage"]})
@@ -285,11 +304,12 @@ def main():
     parser.add_argument("--effort")
     args = parser.parse_args()
     protocol,runtime = read(args.root/"protocol.json"),read(args.runtime)
-    failures=[]
     for name in protocol["scenes"]:
         if args.scene and args.scene!=name:
             continue
         for row in matrix(protocol):
+            if (args.root / "launch_hold.json").exists():
+                return
             if any(getattr(args,k) and getattr(args,k)!=row[k] for k in ("model","condition","effort")):
                 continue
             spec={"scene":name,**row,"protocol_sha256":digest(args.root/"protocol.json")}
@@ -299,8 +319,7 @@ def main():
             try:
                 run_trial(args.root,spec,runtime,protocol)
             except Exception as error:
-                failures.append({"id":identifier,"error":str(error)})
-                write(args.root/"failures.json",failures)
+                print(f"{identifier}: {error}", file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

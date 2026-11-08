@@ -12,6 +12,31 @@ SPEC.loader.exec_module(common)
 
 
 class ExperimentUsageTests(unittest.TestCase):
+    def test_controller_binds_lineage_without_changing_scene_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            candidate = Path("models/M0/candidate.json")
+            scene = {"objects": [{"id": "chair"}], "provenance": {"sources": [
+                {"path": "models/M0/model.py", "description": "Modeling code"}]}}
+            common.write(project / candidate, scene)
+            common.write(project / "experiment.json", {"condition": "harness_tools"})
+            result = common.bind_candidate_sources(project, candidate)
+            self.assertEqual(result["objects"], scene["objects"])
+            self.assertEqual({s["path"] for s in result["provenance"]["sources"]},
+                             {"models/M0/model.py", "observations/manifest.json", "cameras.json",
+                              "dense/inference.json", "reconstruction_report.json"})
+            self.assertEqual(common.bind_candidate_sources(project, candidate), result)
+
+    def test_interrupted_turn_retains_last_reported_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            common.write(home / "sessions/rollout-other.jsonl", {})
+            path = home / "sessions/rollout-test-thread.jsonl"
+            usage = {"input_tokens": 100, "output_tokens": 20, "reasoning_output_tokens": 7, "total_tokens": 120}
+            row = {"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": usage}}}
+            path.write_text(json.dumps(row) + '\n{"type":')
+            self.assertEqual(common.thread_usage(home, "test-thread"), usage)
+
     def test_all_input_images_receive_their_camera(self):
         poses = [[[i, 0, 0, 0]] for i in range(54)]
         data = dict(w=640, h=480, fl_x=500, fl_y=510, cx=320, cy=240,

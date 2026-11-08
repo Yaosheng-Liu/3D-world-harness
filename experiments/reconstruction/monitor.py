@@ -26,7 +26,7 @@ def snapshot(root):
             trial = root / "runs" / identifier
             state = read(trial / "status.json") if (trial / "status.json").exists() else {
                 "stage": "interrupted" if trial.exists() else "queued"}
-            trials.append({"id": identifier, "model": spec["model"], **state})
+            trials.append({"id": identifier, "scene": scene, **spec, **state})
             if state["stage"] in {"failed", "interrupted"}:
                 errors.append({"trial": identifier, "kind": "trial", "error": state.get("error", "Missing status")})
             if state["stage"] == "modeled":
@@ -76,12 +76,39 @@ def start_worker(root, key, script, arguments):
 
 def tick(root, runtime):
     state = snapshot(root)
+    protocol = read(root / "protocol.json")
     actions = []
+    finished = sorted((t for t in state["trials"] if t["stage"] in TERMINAL),
+                      key=lambda t: t.get("updated_at", 0))
+    limit = protocol.get("halt_after_consecutive_failures")
+    hold = root / "launch_hold.json"
+    if limit and len(finished) >= limit and all(t["stage"] == "failed" for t in finished[-limit:]):
+        if not hold.exists():
+            write(hold, {"at": time.time(), "reason": "Consecutive trial failures require diagnosis",
+                         "trials": [t["id"] for t in finished[-limit:]]})
+    gate_path = root / "execution_gate.json"
+    gate = read(gate_path) if gate_path.exists() else None
+    gated_trial = None
+    if gate and not gate.get("passed_at"):
+        gated_trial = next(t for t in state["trials"] if t["id"] == gate["trial"])
+        if gated_trial["stage"] == "failed":
+            write(hold, {"at": time.time(), "reason": "Full-chain verification trial failed", "trial": gate["trial"]})
+        if any((root / "evaluation_results" / gate["trial"] / f"M{i}" / "error.json").exists()
+               for i in range(protocol["modeling_passes"])):
+            write(hold, {"at": time.time(), "reason": "Full-chain verification evaluation failed", "trial": gate["trial"]})
+        evaluated = all((root / "evaluation_results" / gate["trial"] / f"M{i}" / "complete.json").exists()
+                        for i in range(protocol["modeling_passes"]))
+        if gated_trial["stage"] == "modeled" and evaluated:
+            gate["passed_at"] = time.time()
+            write(gate_path, gate)
+            gated_trial = None
     # A crashed controller may leave a live model call. Keep that trial intact for
     # diagnosis rather than skipping it or silently starting a replacement.
     if not state["automated_finished"]:
-        for model in read(root / "protocol.json")["models"]:
+        for model in protocol["models"]:
             key = model + "-coordinator"
+            if hold.exists() or (gated_trial and gated_trial["model"] != model):
+                continue
             if worker_alive(root / f"{key}.json", "run.py", root):
                 continue
             trials = [t for t in state["trials"] if t["model"] == model]
@@ -89,12 +116,20 @@ def tick(root, runtime):
             if orphans:
                 state["issues"].append({"kind": "orphaned_controller", "model": model, "trials": orphans})
             elif any(t["stage"] == "queued" for t in trials):
-                actions.append(start_worker(root, key, "run.py", ["--runtime", str(runtime), "--model", model]))
+                arguments = ["--runtime", str(runtime), "--model", model]
+                if gated_trial:
+                    arguments += ["--scene", gated_trial["scene"], "--condition", gated_trial["condition"],
+                                  "--effort", gated_trial["effort"]]
+                actions.append(start_worker(root, key, "run.py", arguments))
         if not worker_alive(root / "report-process.json", "report.py", root):
             actions.append(start_worker(root, "report-process", "report.py", ["--watch"]))
         if not worker_alive(root / "evaluation-process.json", "evaluate.py", root):
             actions.append(start_worker(root, "evaluation-process", "evaluate.py", ["--runtime", str(runtime), "--watch"]))
     state["actions"] = actions
+    state["execution_gate"] = gate
+    state["launch_hold"] = read(hold) if hold.exists() else None
+    if state["launch_hold"]:
+        state["outcome"] = "needs_attention"
     state["free_disk_bytes"] = shutil.disk_usage(root).free
     write(root / "monitor.json", state)
     for action in actions:
@@ -109,6 +144,10 @@ def tick(root, runtime):
              "失败模型调用和评测错误保留；未完成检查点不计成功。语义编辑归属仍单独核验。"]
     if state["issues"]:
         lines += ["", "待处理记录：", *[f"- {issue}" for issue in state["issues"]]]
+    if state["launch_hold"]:
+        lines += ["", "后续启动已停止，待处理：" + str(state["launch_hold"])]
+    elif gated_trial:
+        lines += ["", "先验证一次完整建模—审核—返修及评测，再放行其余队列：" + gated_trial["id"]]
     (root / "MONITOR.md").write_text("\n".join(lines) + "\n")
     if state["automated_finished"]:
         write(root / "automatic_completion.json", {k: v for k, v in state.items() if k != "trials"})

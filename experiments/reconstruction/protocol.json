@@ -1,5 +1,5 @@
 {
-  "id": "worldharness_20261109",
+  "id": "worldharness_20261109_v2",
   "seed": 20261109,
   "scenes": {
     "bedroom": "05c8b23b4c3a186d81efad50fd82be9841b694b5edd818f6f23619a494936746",
@@ -14,7 +14,9 @@
   "reviewer": {"model": "gpt-6.1-sol", "effort": "ultra"},
   "modeling_passes": 3,
   "review_passes": 2,
-  "modeling_timeout_seconds": [1800, 900, 900],
+  "modeling_timeout_seconds": [3600, 1800, 1800],
+  "halt_after_consecutive_failures": 2,
+  "submission": "Modeler saves candidate, edit targets and code and finishes within the shared time budget. Controller binds immutable input lineage and performs the final build for every condition. Timeouts remain recorded failures, with last-reported usage marked as a lower bound.",
   "review_timeout_seconds": 1200,
   "planner_timeout_seconds": 900,
   "training_frames": 48,

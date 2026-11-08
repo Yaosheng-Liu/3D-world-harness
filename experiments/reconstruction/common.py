@@ -76,6 +76,38 @@ def cli_usage(path):
             "errors": errors, "events_sha256": digest(path)}
 
 
+def thread_usage(home, thread_id):
+    """Read the last reported cumulative snapshot, including interrupted turns."""
+    snapshot = {}
+    for path in sorted((Path(home) / "sessions").rglob(f"*{thread_id}.jsonl")):
+        with path.open() as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # A killed streaming writer can leave its final line incomplete.
+                payload = event.get("payload", {})
+                if event.get("type") == "event_msg" and payload.get("type") == "token_count":
+                    info = payload.get("info") or {}
+                    snapshot = info.get("total_token_usage") or snapshot
+    return snapshot
+
+
+def bind_candidate_sources(project, candidate):
+    """The controller owns immutable input lineage; the agent owns scene content."""
+    scene = read(project / candidate)
+    names = ["observations/manifest.json", "cameras.json"]
+    if read(project / "experiment.json")["condition"] != "single_basic":
+        names += ["dense/inference.json", "reconstruction_report.json"]
+    sources = scene["provenance"]["sources"]
+    existing = {source["path"] for source in sources}
+    for name in names:
+        if name not in existing:
+            sources.append({"path": name, "description": "Fixed experiment input lineage, bound by controller"})
+    write(project / candidate, scene)
+    return scene
+
+
 def matrix(protocol):
     rows = []
     for model in protocol["models"]:

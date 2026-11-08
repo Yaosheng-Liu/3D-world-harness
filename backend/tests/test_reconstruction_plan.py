@@ -185,6 +185,21 @@ class ReconstructionPlanTests(unittest.TestCase):
                                     reason="Initial drawer hypothesis was the same cabinet door, confirmed in frame 1")
         self.assertTrue(validate_modeling_report(self.project, self.plan_path, scene, report)["passed"])
 
+    def test_report_accepts_known_groups_but_still_requires_their_objects(self):
+        self.plan["objects"][0]["observations"] = self.plan["objects"][1]["observations"]
+        self.write(self.plan_path, self.plan)
+        report = self.modeling_report()
+        group = {"plan_id": "furniture", "scene_ids": ["cabinet_body", "drawer_body"],
+                 "resolution": "modeled", "reason": "Organization of independently editable parts", "frame_indices": [1]}
+        report["objects"].append(group)
+        self.assertTrue(validate_modeling_report(self.project, self.plan_path, self.modeled_scene(), report)["passed"])
+        report["objects"] = [group]
+        result = validate_modeling_report(self.project, self.plan_path, self.modeled_scene(), report)
+        self.assertEqual(result["missing_objects"], ["cabinet", "drawer"])
+        report["objects"].append(group)
+        with self.assertRaisesRegex(ValueError, "repeated planned"):
+            validate_modeling_report(self.project, self.plan_path, self.modeled_scene(), report)
+
     def test_modeling_report_cannot_silently_drop_initial_objects_or_regions(self):
         report = self.modeling_report()
         report["objects"].pop()

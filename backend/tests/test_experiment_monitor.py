@@ -67,6 +67,36 @@ class ExperimentMonitorTests(unittest.TestCase):
             monitor.tick(self.root, self.root / "runtime.json")
         start.assert_not_called()
 
+    def test_consecutive_failures_hold_new_launches(self):
+        self.protocol["halt_after_consecutive_failures"] = 2
+        monitor.write(self.root / "protocol.json", self.protocol)
+        self.trial("single_basic", "ultra", "failed")
+        self.trial("harness_tools", "high", "failed")
+        with patch.object(monitor, "worker_alive", return_value=True):
+            result = monitor.tick(self.root, self.root / "runtime.json")
+        self.assertTrue((self.root / "launch_hold.json").exists())
+        self.assertEqual(result["outcome"], "needs_attention")
+
+    def test_full_chain_gate_releases_only_after_all_three_evaluations(self):
+        identifier = "s__harness_tools__test__high"
+        monitor.write(self.root / "execution_gate.json", {"trial": identifier})
+        with patch.object(monitor, "worker_alive", return_value=False), \
+             patch.object(monitor, "start_worker", return_value={}) as start:
+            monitor.tick(self.root, self.root / "runtime.json")
+        run = next(c for c in start.call_args_list if c.args[2] == "run.py")
+        self.assertIn("--scene", run.args[3])
+        self.assertIn("high", run.args[3])
+        trial = self.trial("harness_tools", "high", "modeled")
+        for i in range(3):
+            monitor.write(trial / "checkpoints" / f"M{i}" / "frozen.json", {})
+            monitor.write(self.root / "evaluation_results" / trial.name / f"M{i}" / "complete.json", {})
+        with patch.object(monitor, "worker_alive", return_value=False), \
+             patch.object(monitor, "start_worker", return_value={}) as start:
+            monitor.tick(self.root, self.root / "runtime.json")
+        self.assertIn("passed_at", monitor.read(self.root / "execution_gate.json"))
+        run = next(c for c in start.call_args_list if c.args[2] == "run.py")
+        self.assertNotIn("--scene", run.args[3])
+
 
 if __name__ == "__main__":
     unittest.main()

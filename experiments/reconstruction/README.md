@@ -55,6 +55,10 @@ python3 experiments/reconstruction/monitor.py --root EXP --runtime RUNTIME --int
 
 监控使用已有 `*-coordinator.json`、`report-process.json` 和 `evaluation-process.json` 核对PID及命令。队列控制器退出且没有进行中的试验时，继续尚未启动的项目；有孤立调用则保留现场并在 `MONITOR.md` 标记待处理。后台统计和评测进程退出可恢复，模型失败与评测错误不自动重跑。全部试验结束且现有检查点均得到评价或错误记录后，写入 `automatic_completion.json` 并结束巡检；包含失败时明确记录 `finished_with_errors`，语义编辑核验仍单列。
 
+当前v2协议统一采用60／30／30分钟建模上限，实际时间与Token分别记录。初始用户任务保持相同；公共输出说明告知时间预算，由控制器统一绑定固定输入来源并执行最终构建。超时仍保留为失败，最后已报告的会话用量作为下界，不计为零。单次调用使用用户级systemd scope停止整个进程树，需Linux用户systemd管理器。
+
+v1因报告分组兼容、深度证据绑定及时间预算问题终止，产物和成本单独保留。v2从全新模型上下文开始，共用相同的训练观测缓存，不使用v1模型。`execution_gate.json`指定的首次完整验证须完成三版建模、两次审核及三版私有评测，才能放行其余队列；连续两次运行失败会写入`launch_hold.json`停止新启动，保留诊断现场。
+
 本机可运行 `sync_records.py --remote spark145 --source EXP --destination LOCAL --interval 300`，持续镜像协议、进度、用量、指标和对象归属检查图。原始会话、认证及大型工程不进入同步清单；网络中断记入 `sync_status.json`，下一周期再次同步。两类巡检均使用文件锁防止重复启动。
 
 ## 方法边界与记录口径

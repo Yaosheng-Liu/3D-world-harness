@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import time
 
-from common import REPO, command, docker, read, write
+from common import REPO, bind_candidate_sources, command, docker, read, write
 
 sys.path[:0] = [str(REPO / "backend"), str(REPO / "scripts")]
 
@@ -31,7 +31,7 @@ def main():
     started = time.time()
     if args.operation == "build":
         from world_build import build_world
-        result = build_world(project, scene=read(project / args.scene), render=True, timeout=900)
+        result = build_world(project, scene=bind_candidate_sources(project, args.scene), render=True, timeout=900)
         output = project / args.scene.parent / "build_receipt.json"
         write(output, result)
         result = {"receipt_path": str(output), "blend_path": result["blend_path"],
