@@ -36,7 +36,7 @@
   "repair_prompt": "检查当前场景与参考图像，修正发现的问题并提交新版本。",
   "geometry_reference": "Independent withheld three-view SIFT triangulation; sparse pseudo-reference, not scan ground truth.",
   "isolation": "Fresh model thread and per-run CODEX_HOME. Workspace-write sandbox; experiment access restrictions are task instructions, not a read-isolation security boundary.",
-  "initialization_cost": "Fresh per-scene deterministic DA3/TSDF computation shared by tool conditions; report cold-start cost once per run and separately disclose shared execution.",
+  "initialization_cost": "Numerically identical raw-training DA3/TSDF observations are reused from the setup batch, not old modeled scenes. New initialization execution is zero; disclose the cache source, original measured preparation cost, and a separately labeled cold-start equivalent. Fixed observation inputs are shared by all tool conditions.",
   "early_acceptance": "Complete the fixed M0/R1/M1/R2/M2 schedule even if a reviewer accepts; no third reviewer. Preserve failures without replacing them with extra modeling passes.",
   "test_access": "Private evaluation inputs are excluded from agent task packets and tool containers. Agents must not inspect experiment siblings, prior reconstructions, or source dataset directories.",
   "edit_tasks": ["translate", "rotate", "uniform_scale", "hide", "material"],
