@@ -70,6 +70,8 @@ def evaluate(root, trial, checkpoint, runtime, protocol):
                              '-v',f"{runtime['torch_cache']}:/torch-cache:ro",'-e',
                              'PYTHONPATH=/evaluation-packages','-e','TORCH_HOME=/torch-cache']
     command(argv,output/'image.log')
+    command(docker(runtime,mounts,Path(__file__).with_name('target_panels.py'),
+                   ['--job',output/'job.json','--references',reference_dir]),output/'target_panels.log')
     blender=read(output/'blender_metrics.json')
     edits=blender['edit_tasks']
     result={'trial':trial.name,'checkpoint':checkpoint,'spec':spec,

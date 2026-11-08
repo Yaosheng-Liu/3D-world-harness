@@ -31,6 +31,21 @@ def digest(path):
     return h.hexdigest()
 
 
+def camera_manifest(data, training_frames):
+    """Map supplied poses to the prepared pinhole images in every trial packet."""
+    intrinsics = {key: data[source] for key, source in
+                  {"width":"w", "height":"h", "fx":"fl_x", "fy":"fl_y", "cx":"cx", "cy":"cy"}.items()}
+    frames = []
+    for index, frame in enumerate(data["frames"]):
+        role = "train" if index < training_frames else "heldout"
+        frames.append({"index": index, "role": role, "source_index": frame["source_index"],
+                       "image": f"observations/{role}/{index:06d}.png",
+                       "camera_to_world": frame["transform_matrix"]})
+    return {"camera_convention":"OpenGL camera-to-world; image +x right, camera -z forward",
+            "image_calibration":"Prepared pinhole images; see calibration_audit.json for distortion handling",
+            "intrinsics": intrinsics, "frames": frames}
+
+
 def command(arguments, log, *, timeout=3600, env=None):
     started = time.time()
     with Path(log).open("w") as stream:

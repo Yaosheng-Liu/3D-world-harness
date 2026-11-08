@@ -652,7 +652,7 @@ def export_reconstruction(mesh, dense, data, manifest, output, voxel, stats,
         'calibration': json.loads((output / 'calibration_audit.json').read_text()),
         'voxel_size_dataset_units': voxel,
         'triangles_before_simplification': triangles_before,
-        'simplification_method': ('Quadric decimation capped at 300000 faces; provisional observation evidence' if observations_only else
+        'simplification_method': ('Quadric decimation target 300000 faces; actual count reported; provisional observation evidence' if observations_only else
                                   'Vertex clustering at six TSDF voxels; no QEM or hole filling'),
         'vertex_cluster_size_dataset_units': cluster_size,
         'geometry_lineage': lineage,
@@ -747,7 +747,7 @@ def main():
     parser.add_argument('--model', type=Path, default=Path('/opt/da3/checkpoints/DA3NESTED-GIANT-LARGE'))
     parser.add_argument('--resolution', type=int, default=756)
     parser.add_argument('--observations-only', action='store_true',
-                        help='Export provisional neutral TSDF observations capped at 300000 faces, without a photo atlas')
+                        help='Export provisional neutral TSDF observations with a 300000-face simplification target, without a photo atlas')
     args = parser.parse_args()
     if (args.output / 'world/scene.json').exists():
         raise FileExistsError('An initialized world already exists; reconstruct into a new project')

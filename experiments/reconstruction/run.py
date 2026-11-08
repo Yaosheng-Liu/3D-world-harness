@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-from common import REPO, cli_usage, digest, matrix, read, write
+from common import REPO, camera_manifest, cli_usage, digest, matrix, read, write
 
 sys.path[:0] = [str(REPO / "backend"), str(REPO / "scripts")]
 from reconstruction_plan import MODEL_REPORT_SCHEMA, PLAN_SCHEMA
@@ -102,6 +102,9 @@ def initialize_run(root, run, spec, runtime):
         shutil.copytree(source / name, project / name)
     for name in ("split_manifest.json", "calibration_audit.json", "training_contact_sheet.jpg"):
         shutil.copyfile(source / name, project / name)
+    protocol = read(root / "protocol.json")
+    write(project / "cameras.json", camera_manifest(read(shared / "source/transforms.json"),
+                                                   protocol["training_frames"]))
     views = read(shared / "views.json")
     if spec["condition"] != "single_basic":
         for name in ("dense", "assets"):
@@ -128,7 +131,7 @@ def initialize_run(root, run, spec, runtime):
     write(project / "plan_schema.json", PLAN_SCHEMA)
     (project / "AGENTS.md").write_text(f"""# Experiment task packet
 Only read this project and generic implementation at {REPO}. Do not read experiment siblings, old models, source dataset directories, private evaluation images or other agents' sessions. No web/asset download or additional agent delegation. Physics is deferred.
-Input: observations/manifest.json, images, training_contact_sheet.jpg. Six calibrated validation cameras are in world/scene.json and must remain unchanged. The schema-only object (if present) is not scene geometry. Separate visible objects and give stable IDs. Captured appearance may use only supplied images; no camera-facing photo planes. Unseen geometry must be marked estimated.
+Input: observations/manifest.json, images, cameras.json (all training and validation poses), training_contact_sheet.jpg. Preserve these inputs and world/scene.json. Six calibrated validation cameras in world/scene.json must remain unchanged in every candidate. The schema-only object (if present) is not scene geometry. Separate visible objects and give stable IDs. Captured appearance may use only supplied images; no camera-facing photo planes. Unseen geometry must be marked estimated.
 Scene JSON format: follow world/scene.json and {REPO}/backend/world_model.py. Common build command: python3 {Path(__file__).with_name('tools.py')} --project {project} build --scene <candidate.json>. It writes build_receipt.json next to the candidate. Save new scripts and assets inside each checkpoint's model directory; preserve prior checkpoints and inputs. Maximum 256 objects and 1,000,000 visual triangles. Do not modify implementation or experiment records.
 Common editing tasks are listed in edit_task_targets.json. Next to each candidate write edit_targets.json mapping each listed key to the corresponding scene object ID, or null if the target is missing or unresolved. This declaration will be independently inspected; naming an object is not evidence of correct ownership.
 Specialist tools are enabled only for tool conditions: use tools.py segment --plan <plan.json> --output <new-dir>; geometry --plan <plan.json> --segments <segments.json> --output <new-dir>; depth --receipt <build_receipt.json>; triangulate --receipt <receipt> --landmarks <landmarks.json>. A self-authored plan must follow plan_schema.json. Do not run specialist tools in single_basic. Tools do not certify reconstruction correctness.
@@ -136,7 +139,7 @@ Specialist tools are enabled only for tool conditions: use tools.py segment --pl
     validate_scene(scene, project)
     protected = [p for p in (project / "observations").rglob("*") if p.is_file()]
     protected += [project / name for name in ("split_manifest.json", "calibration_audit.json",
-                  "training_contact_sheet.jpg", "world/scene.json", "experiment.json", "AGENTS.md",
+                  "training_contact_sheet.jpg", "cameras.json", "world/scene.json", "experiment.json", "AGENTS.md",
                   "edit_task_targets.json", "tool_runtime.json")]
     write(run / "input_hashes.json", {str(p.relative_to(project)): digest(p) for p in protected})
     return project
@@ -177,6 +180,11 @@ def freeze_checkpoint(project, directory, candidate, receipt):
         destination = frozen / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(project / name, destination)
+    for path in (project / candidate).parent.rglob("*"):
+        if path.is_file() and (path.suffix in {".py", ".sh"} or path.name == "modeling_report.json"):
+            destination = frozen / path.relative_to(project)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, destination)
     for key, suffix in (("blend_path","blend"),("glb_path","glb")):
         shutil.copyfile(build[key], directory / f"scene.{suffix}")
     write(directory / "scene.json", scene)

@@ -7,10 +7,11 @@ import shutil
 import sys
 
 import bpy
+import numpy as np
 from mathutils import Matrix, Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from world_blender import configure_camera
+from world_blender import configure_camera, check_projection
 from oidn_blender import prepare_passes, denoise
 
 
@@ -39,7 +40,8 @@ def main():
     bpy.ops.wm.open_mainfile(filepath=job["blend"])
     scene = bpy.context.scene
     deps = bpy.context.evaluated_depsgraph_get()
-    vertices, faces = [], []
+    vertices, faces, owners = [], [], []
+    identifiers=sorted(o['stable_id'] for o in scene.objects if o.get('stable_id'))
     for obj in scene.objects:
         if obj.type != "MESH" or obj.get("world_role") != "visual":
             continue
@@ -49,6 +51,12 @@ def main():
         offset = len(vertices)
         vertices.extend(tuple(evaluated.matrix_world @ v.co) for v in mesh.vertices)
         faces.extend(tuple(offset+i for i in face.vertices) for face in mesh.loop_triangles)
+        parent=obj.parent
+        while parent and not parent.get('stable_id'):
+            parent=parent.parent
+        if parent is None:
+            raise ValueError('Visual mesh has no stable object owner')
+        owners.extend([identifiers.index(parent['stable_id'])]*len(mesh.loop_triangles))
         evaluated.to_mesh_clear()
     with (output / "geometry.ply").open("w") as f:
         f.write(f"ply\nformat ascii 1.0\nelement vertex {len(vertices)}\nproperty float x\nproperty float y\nproperty float z\nelement face {len(faces)}\nproperty list uchar int vertex_indices\nend_header\n")
@@ -56,13 +64,24 @@ def main():
             f.write(" ".join(map(str, v))+"\n")
         for face in faces:
             f.write("3 "+" ".join(map(str, face))+"\n")
+    np.savez_compressed(output/'geometry_owners.npz',owners=np.asarray(owners,dtype=np.int32),
+                        identifiers=np.asarray(identifiers))
     scene.cycles.samples = job["samples"]
     scene.cycles.use_denoising = False
     scene.render.threads_mode, scene.render.threads = "FIXED", 8
     scene.render.image_settings.file_format = "PNG"
     camera = scene.camera
+    projection_audit=[]
     for view in job["views"]:
+        if 'camera_to_world' in view:
+            camera.matrix_world=Matrix(view['camera_to_world'])
+        else:
+            camera.location=view['position']
+            camera.rotation_euler=(Vector(view['target'])-camera.location).to_track_quat('-Z','Y').to_euler()
         configure_camera(scene, camera, view)
+        if 'intrinsics' in view:
+            projection_audit.append({'view_id':view['id'],**check_projection(scene,camera,view,
+                                     probe_distance=max(1,camera.location.length))})
         passes=output/"denoise_passes"
         passes.mkdir(exist_ok=True)
         scene.use_nodes=True
@@ -134,6 +153,7 @@ def main():
             temp.unlink(missing_ok=True)
             temp.with_suffix('.blend1').unlink(missing_ok=True)
     result={"vertices":len(vertices),"triangles":len(faces),"edit_tasks":edits,
+            "projection_audit":projection_audit,
             "edit_semantics":"Declared target mapping; semantic ownership requires independent visual verification.",
             "reopened":True}
     (output/"blender_metrics.json").write_text(json.dumps(result,indent=2)+"\n")
