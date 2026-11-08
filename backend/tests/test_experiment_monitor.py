@@ -1,0 +1,72 @@
+import importlib.util
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+
+DIRECTORY = Path(__file__).resolve().parents[2] / "experiments/reconstruction"
+sys.path.insert(0, str(DIRECTORY))
+SPEC = importlib.util.spec_from_file_location("experiment_monitor", DIRECTORY / "monitor.py")
+monitor = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(monitor)
+
+
+class ExperimentMonitorTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.protocol = {"scenes": {"s": "id"}, "models": ["test"], "conditions": ["single_basic"],
+                         "main_effort": "ultra", "ablation_effort": "high", "modeling_passes": 3}
+        monitor.write(self.root / "protocol.json", self.protocol)
+
+    def trial(self, condition, effort, stage):
+        trial = self.root / "runs" / f"s__{condition}__test__{effort}"
+        monitor.write(trial / "status.json", {"stage": stage, "error": "preserved" if stage == "failed" else None})
+        return trial
+
+    def test_orphaned_call_is_not_silently_skipped_or_retried(self):
+        trial = self.trial("single_basic", "ultra", "modeling")
+        original = (trial / "status.json").read_bytes()
+        with patch.object(monitor, "worker_alive", return_value=False), \
+             patch.object(monitor, "start_worker", return_value={}) as start:
+            state = monitor.tick(self.root, self.root / "runtime.json")
+        self.assertIn("orphaned_controller", {i["kind"] for i in state["issues"]})
+        self.assertFalse(any(call.args[2] == "run.py" for call in start.call_args_list))
+        self.assertEqual((trial / "status.json").read_bytes(), original)
+
+    def test_only_queued_trials_restart_after_controller_exit(self):
+        failed = self.trial("single_basic", "ultra", "failed")
+        original = (failed / "status.json").read_bytes()
+        with patch.object(monitor, "worker_alive", return_value=False), \
+             patch.object(monitor, "start_worker", return_value={}) as start:
+            monitor.tick(self.root, self.root / "runtime.json")
+        self.assertEqual(sum(call.args[2] == "run.py" for call in start.call_args_list), 1)
+        self.assertEqual((failed / "status.json").read_bytes(), original)
+
+    def test_finished_modeling_waits_for_all_frozen_evaluations(self):
+        for condition, effort in (("single_basic", "ultra"), ("harness_tools", "high")):
+            trial = self.trial(condition, effort, "modeled")
+            for i in range(3):
+                monitor.write(trial / "checkpoints" / f"M{i}" / "frozen.json", {})
+                if i < 2:
+                    monitor.write(self.root / "evaluation_results" / trial.name / f"M{i}" / "complete.json", {})
+        self.assertFalse(monitor.snapshot(self.root)["automated_finished"])
+        for trial in (self.root / "runs").glob("*"):
+            monitor.write(self.root / "evaluation_results" / trial.name / "M2/error.json", {"error": "fixture"})
+        state = monitor.snapshot(self.root)
+        self.assertTrue(state["automated_finished"])
+        self.assertEqual(state["outcome"], "finished_with_errors")
+        self.assertEqual(state["semantic_edit_verification"], "pending_independent_visual_check")
+
+    def test_unfinished_workers_are_not_duplicated(self):
+        with patch.object(monitor, "worker_alive", return_value=True), \
+             patch.object(monitor, "start_worker") as start:
+            monitor.tick(self.root, self.root / "runtime.json")
+        start.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

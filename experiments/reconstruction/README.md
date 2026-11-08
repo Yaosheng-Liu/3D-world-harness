@@ -20,6 +20,8 @@
 | `evaluate_blender.py` | 固定测试渲染、世界坐标几何导出、编辑与保存重开检查 |
 | `image_metrics.py` | PSNR、SSIM、AlexNet LPIPS |
 | `report.py` | 只读队列进度与各角色实时累计 Token 摘要 |
+| `monitor.py` | 每5分钟核对队列与评测进度，恢复退出的后台服务，保留失败和孤立调用 |
+| `sync_records.py` | 将允许清单内的统计和检查图同步到本机，不复制认证或会话 |
 | `common.py` | 原子记录、哈希、CLI 用量快照与运行矩阵 |
 
 计算端输出结构：
@@ -46,9 +48,14 @@ python3 experiments/reconstruction/prepare.py --root EXP --runtime RUNTIME --sta
 python3 experiments/reconstruction/prepare.py --root EXP --runtime RUNTIME --stage initialize
 python3 experiments/reconstruction/run.py --root EXP --runtime RUNTIME
 python3 experiments/reconstruction/evaluate.py --root EXP --runtime RUNTIME
+python3 experiments/reconstruction/monitor.py --root EXP --runtime RUNTIME --interval 300
 ```
 
 运行根目录一经创建不自动重跑失败试验；再次启动跳过已有目录。基础设施修复和实验失败均应保留记录，新的试验需建立新的协议目录。评价失败保存 error.json，修复后显式处理，不循环静默重试。`--model`、`--scene`、`--condition` 和 `--effort` 可限定运行队列。
+
+监控使用已有 `*-coordinator.json`、`report-process.json` 和 `evaluation-process.json` 核对PID及命令。队列控制器退出且没有进行中的试验时，继续尚未启动的项目；有孤立调用则保留现场并在 `MONITOR.md` 标记待处理。后台统计和评测进程退出可恢复，模型失败与评测错误不自动重跑。全部试验结束且现有检查点均得到评价或错误记录后，写入 `automatic_completion.json` 并结束巡检；包含失败时明确记录 `finished_with_errors`，语义编辑核验仍单列。
+
+本机可运行 `sync_records.py --remote spark145 --source EXP --destination LOCAL --interval 300`，持续镜像协议、进度、用量、指标和对象归属检查图。原始会话、认证及大型工程不进入同步清单；网络中断记入 `sync_status.json`，下一周期再次同步。两类巡检均使用文件锁防止重复启动。
 
 ## 方法边界与记录口径
 
