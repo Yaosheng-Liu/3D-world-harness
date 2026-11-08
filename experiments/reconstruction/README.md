@@ -19,6 +19,7 @@
 | `evaluate.py` | 私有评估调度与 CSV/JSON 汇总 |
 | `evaluate_blender.py` | 固定测试渲染、世界坐标几何导出、编辑与保存重开检查 |
 | `image_metrics.py` | PSNR、SSIM、AlexNet LPIPS |
+| `report.py` | 只读队列进度与各角色实时累计 Token 摘要 |
 | `common.py` | 原子记录、哈希、CLI 用量快照与运行矩阵 |
 
 计算端输出结构：
