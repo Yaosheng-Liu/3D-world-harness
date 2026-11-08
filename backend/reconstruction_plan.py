@@ -251,6 +251,13 @@ Splits, merges and exclusions remain visible to the independent critic.
                     raise ModelingReportError(f"modeling report has an unknown or repeated planned object: {key}")
                 seen_objects.add(key)
                 cited = {view["frame_index"] for view in planned[key]["observations"]}
+                if planned[key]["kind"] == "group":
+                    pending = [key]
+                    while pending:
+                        parent = pending.pop()
+                        children = [obj for obj in plan["objects"] if obj["parent_id"] == parent]
+                        cited.update(view["frame_index"] for obj in children for view in obj["observations"])
+                        pending.extend(obj["id"] for obj in children)
             else:
                 key = row["region_index"]
                 if key >= len(plan["unexplained_regions"]) or key in seen_regions:
