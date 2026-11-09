@@ -331,11 +331,19 @@ def run_trial(root, spec, runtime, protocol):
             if seeded and checkpoint == start and plan:
                 prompt += "\n这是中断任务的续接，保留本轮已保存的修改并完成提交，不从头重建场景。"
             update("modeling",checkpoint=checkpoint)
-            usage = agent(project,next_attempt(run/"calls", f"model_M{checkpoint}"),runtime,
-                          {"model":spec["model"],"effort":spec["effort"]},role_home(run,"modeler",runtime),
-                          prompt,images=[project/"training_contact_sheet.jpg"],thread=thread,
-                          previous_usage=previous_usage,
-                          timeout=budget)
+            submission = seed.get("saved_submission") if seeded else None
+            if submission and submission["checkpoint"] == checkpoint:
+                if digest(project/candidate) != submission["candidate_sha256"]:
+                    raise ValueError("Saved submission changed before continuation")
+                usage = read(run/submission["call"]/"usage.json")
+                if usage.get("error") or usage["exit_code"] != 0 or usage["completed_turns"] != 1:
+                    raise ValueError("Saved submission must come from a completed modeling turn")
+            else:
+                usage = agent(project,next_attempt(run/"calls", f"model_M{checkpoint}"),runtime,
+                              {"model":spec["model"],"effort":spec["effort"]},role_home(run,"modeler",runtime),
+                              prompt,images=[project/"training_contact_sheet.jpg"],thread=thread,
+                              previous_usage=previous_usage,
+                              timeout=budget)
             verify_files(project, read(run / "input_hashes.json"))
             thread = usage["thread_id"] or thread
             previous_usage = usage["raw_cumulative_usage"]

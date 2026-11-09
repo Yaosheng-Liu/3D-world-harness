@@ -73,6 +73,12 @@ class PhysicsValidationTests(unittest.TestCase):
         self.assertNotIn('size="2.5 2.5 2.5"', xml)
         self.assertIn('size="0.05 0.05 0.05"', xml)
 
+    def test_simulation_still_requires_collision_geometry(self):
+        world = falling_scene()
+        world["objects"][1]["collision"] = []
+        with self.assertRaisesRegex(WorldError, "collision volumes"):
+            export_mjcf(world)
+
     def test_finite_but_unrepresentable_volumes_are_rejected(self):
         world = falling_scene()
         for shape in (box([1e300, 1e300, 1e300]), {"type": "sphere", "radius": 1e300},

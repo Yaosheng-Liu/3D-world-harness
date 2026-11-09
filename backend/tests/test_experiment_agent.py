@@ -116,6 +116,40 @@ class ExperimentAgentTests(unittest.TestCase):
             self.assertEqual(result["completed_turns"], 1)
             self.assertEqual(result["usage"]["total_tokens"], 12)
 
+    def test_saved_submission_continues_to_review_without_another_modeling_turn(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = {"scene":"s", "model":"test", "condition":"harness_tools", "effort":"high"}
+            trial = root/"runs/s__harness_tools__test__high"
+            project = trial/"project"
+            initial = {"name":"M0", "candidate":"models/M0/candidate.json", "receipt":"models/M0/build_receipt.json"}
+            runner.write(trial/"status.json", {"stage":"queued", "started_at":0, "checkpoints":[initial]})
+            runner.write(trial/"input_hashes.json", {})
+            runner.write(trial/"checkpoints/M0/frozen.json", {"files":{}})
+            runner.write(project/"models/M1/candidate.json", {"saved":"M1"})
+            saved = {"thread_id":"saved-thread", "raw_cumulative_usage":{"input_tokens":20},
+                     "usage":{"input_tokens":10}, "error":None, "exit_code":0, "completed_turns":1}
+            runner.write(trial/"calls/model_M1/usage.json", saved)
+            runner.write(trial/"resume.json", {"plan":"plan.json", "thread_id":"saved-thread",
+                "raw_cumulative_usage":{"input_tokens":20}, "saved_submission":{
+                    "checkpoint":1, "call":"calls/model_M1",
+                    "candidate_sha256":runner.digest(project/"models/M1/candidate.json")}})
+            protocol = {"modeling_passes":3, "modeling_timeout_seconds":[3600,None,None],
+                        "input_prompt":"Build", "repair_prompt":"Revise"}
+            with patch.object(runner,"agent",return_value=saved) as agent, \
+                 patch.object(runner,"role_home",return_value=trial/"home"), \
+                 patch.object(runner,"feedback",return_value="reviews/review.json") as feedback, \
+                 patch.object(runner,"validate_fixed_views"), \
+                 patch.object(runner,"bind_candidate_sources",return_value={"objects":[{"id":"a"}]}), \
+                 patch.object(runner,"build_world",return_value={}), \
+                 patch.object(runner,"freeze_checkpoint",return_value=({"objects":[{"id":"a"}]},{})):
+                runner.run_trial(root,spec,{},protocol)
+            self.assertEqual(agent.call_count,1)
+            self.assertEqual(agent.call_args.args[1].name,"model_M2")
+            self.assertEqual(agent.call_args.kwargs["previous_usage"],saved["raw_cumulative_usage"])
+            self.assertEqual(feedback.call_count,2)
+            self.assertEqual(runner.read(trial/"status.json")["stage"],"modeled")
+
 
 if __name__ == "__main__":
     unittest.main()

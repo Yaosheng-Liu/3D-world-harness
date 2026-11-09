@@ -42,6 +42,13 @@ class WorldModelTests(unittest.TestCase):
                 "intrinsics": {"width": 64, "height": 48, "fx": 50, "fy": 60, "cx": 25, "cy": 28},
                 "reference_image": "reference.png"}
 
+    def test_visual_world_can_defer_collision_geometry(self):
+        self.scene["objects"][0]["collision"] = []
+        self.assertEqual(self.initialize()["objects"][0]["collision"], [])
+        self.scene["objects"][0]["visual"] = []
+        with self.assertRaises(WorldError):
+            validate_scene(self.scene, self.root)
+
     def test_calibrated_cameras_texture_paths_and_arbitrary_units(self):
         self.scene["views"] = [self.calibrated_view()]
         self.scene["units"] = "arbitrary"

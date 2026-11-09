@@ -185,6 +185,19 @@ class ReconstructionPlanTests(unittest.TestCase):
                                     reason="Initial drawer hypothesis was the same cabinet door, confirmed in frame 1")
         self.assertTrue(validate_modeling_report(self.project, self.plan_path, scene, report)["passed"])
 
+    def test_report_accepts_new_training_views_and_additional_exclusions(self):
+        report = self.modeling_report()
+        report["objects"][1].update(frame_indices=[7], reason="Corrected cross-view identity")
+        report["objects"].append({"plan_id": "schema_collision_proxy", "scene_ids": [],
+                                  "resolution": "excluded", "frame_indices": [7],
+                                  "reason": "Format placeholder, not a visible object"})
+        original_plan = (self.project / self.plan_path).read_bytes()
+        original_report = copy.deepcopy(report)
+        result = validate_modeling_report(self.project, self.plan_path, self.modeled_scene(), report)
+        self.assertTrue(result["passed"])
+        self.assertEqual((self.project / self.plan_path).read_bytes(), original_plan)
+        self.assertEqual(report, original_report)
+
     def test_report_accepts_known_groups_but_still_requires_their_objects(self):
         report = self.modeling_report()
         group = {"plan_id": "furniture", "scene_ids": ["cabinet_body", "drawer_body"],

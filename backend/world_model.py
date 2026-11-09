@@ -46,16 +46,16 @@ _SHAPES = {
 }
 
 
-def _shapes(types):
+def _shapes(types, minimum=1):
     variants = [_record({"type": {"const": kind}, **dimensions, **_TRANSFORM},
                         ["type", *dimensions]) for kind, dimensions in _SHAPES.items() if kind in types]
-    return {"type": "array", "minItems": 1, "items": {"oneOf": variants}}
+    return {"type": "array", "minItems": minimum, "items": {"oneOf": variants}}
 
 
 _OBJECT = _record({
     "id": _ID, "name": _TEXT,
     "parent_id": {"anyOf": [_ID, {"type": "null"}]}, **_TRANSFORM,
-    "visual": _shapes(_SHAPES), "collision": _shapes(("box", "sphere", "cylinder")),
+    "visual": _shapes(_SHAPES), "collision": _shapes(("box", "sphere", "cylinder"), minimum=0),
     "material": _record({"base_color": _vector(4, _UNIT), "roughness": _UNIT, "metallic": _UNIT,
                          "base_color_texture": _TEXT, "appearance": {"enum": ["surface", "captured"]}},
                         ["base_color", "roughness", "metallic"]),

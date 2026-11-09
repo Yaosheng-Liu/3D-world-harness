@@ -226,7 +226,7 @@ def unresolved_objects(plan, segments=None, geometry=None):
 
 
 def validate_modeling_report(project, plan_path, scene, report):
-    """Bind the builder's corrections to the initial inventory and source images.
+    """Check report structure and references without fixing the initial hypotheses.
 
 Completeness here is an accounting check, not a visual acceptance decision.
 Splits, merges and exclusions remain visible to the independent critic.
@@ -247,28 +247,19 @@ Splits, merges and exclusions remain visible to the independent critic.
         for row in rows:
             if kind == "objects":
                 key = row["plan_id"]
-                if key not in planned or key in seen_objects:
-                    raise ModelingReportError(f"modeling report has an unknown or repeated planned object: {key}")
+                if key in seen_objects:
+                    raise ModelingReportError(f"modeling report has a repeated planned object: {key}")
                 seen_objects.add(key)
-                cited = {view["frame_index"] for view in planned[key]["observations"]}
-                if planned[key]["kind"] == "group":
-                    pending = [key]
-                    while pending:
-                        parent = pending.pop()
-                        children = [obj for obj in plan["objects"] if obj["parent_id"] == parent]
-                        cited.update(view["frame_index"] for obj in children for view in obj["observations"])
-                        pending.extend(obj["id"] for obj in children)
             else:
                 key = row["region_index"]
                 if key >= len(plan["unexplained_regions"]) or key in seen_regions:
                     raise ModelingReportError(f"modeling report has an unknown or repeated region: {key}")
                 seen_regions.add(key)
-                cited = {plan["unexplained_regions"][key]["frame_index"]}
             ids, frames = row["scene_ids"], row["frame_indices"]
             if len(ids) != len(set(ids)) or not set(ids) <= actual:
                 raise ModelingReportError(f"modeling report {kind}/{key} refers to missing or repeated candidate object IDs")
-            if len(frames) != len(set(frames)) or not set(frames) <= training or not set(frames) & cited:
-                raise ModelingReportError(f"modeling report {kind}/{key}: resolution must cite the original object or region's training evidence")
+            if len(frames) != len(set(frames)) or not set(frames) <= training:
+                raise ModelingReportError(f"modeling report {kind}/{key}: frame references must use valid training evidence")
             if row["resolution"] == "modeled" and not ids:
                 raise ModelingReportError(f"modeling report {kind}/{key}: modeled evidence must map to real candidate objects")
             if row["resolution"] == "excluded" and ids:

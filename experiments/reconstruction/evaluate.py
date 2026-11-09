@@ -92,6 +92,8 @@ def collect(root):
         if not (trial/'spec.json').exists():
             continue
         spec=read(trial/'spec.json')
+        recovery=trial/'validation_recovery.json'
+        submission_policy=read(recovery)['policy'] if recovery.exists() else 'original'
         for number in range(3):
             metric=root/'evaluation_results'/trial.name/f'M{number}/complete.json'
             if not metric.exists():
@@ -105,6 +107,7 @@ def collect(root):
                  'objects':result['objects'],'triangles':result['triangles'],**totals,
                  'agent_seconds':sum(r['seconds'] for r in records),
                  'initial_origin':spec.get('initial_origin','fresh'),
+                 'submission_policy':submission_policy,
                  'edit_semantic_verification':result['edit_semantic_verification']}
             geometry=result['geometry']
             row.update(geometry['macro_average_metrics'])
