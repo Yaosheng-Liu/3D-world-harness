@@ -233,11 +233,15 @@ def run_trial(root, spec, runtime, protocol):
             receipt = str((model_dir / "build_receipt.json").relative_to(project))
             prompt = protocol["input_prompt"] if checkpoint == 0 else protocol["repair_prompt"]
             budget = protocol["modeling_timeout_seconds"][checkpoint]
-            prompt += (f"\n输出 {candidate}（revision=2）及同目录 edit_targets.json；基本说明见 AGENTS.md。"
-                       f"本次建模预算 {budget} 秒，须在预算内保存候选并结束本次调用。最终构建与程序校验由控制器完成。")
+            prompt += f"\n输出 {candidate}（revision=2）及同目录 edit_targets.json；基本说明见 AGENTS.md。"
+            prompt += (f"\n本次建模预算 {budget} 秒，须在预算内保存候选并结束本次调用。" if budget is not None else
+                       "\n本次返修不设时间上限，完成本轮修改、保存候选和报告后结束调用。")
+            prompt += "最终构建与程序校验由控制器完成。"
             if plan:
                 prompt += (f"\n初始化计划 {plan}；分割 evidence/segments/segments.json；几何 evidence/geometry/geometry.json。"
-                           f"逐项处理物体和未解释区域；输出同目录 modeling_report.json，遵循 modeling_report_schema.json。")
+                           f"逐项处理物体和未解释区域；输出同目录 modeling_report.json，遵循 modeling_report_schema.json。"
+                           "\n建模阶段完成几何、空间关系、物体拆分及外观修改，按需检查局部。"
+                           "整套逐物体移动、隐藏与保存重开检查由审核阶段统一执行，勿重复执行整套验收。")
             if previous and plan:
                 prompt += f"\n本次审核意见：{previous}。保留旧问题ID并按对应原图修复。"
             elif previous:
