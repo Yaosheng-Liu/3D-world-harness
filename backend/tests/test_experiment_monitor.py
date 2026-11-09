@@ -14,6 +14,21 @@ SPEC.loader.exec_module(monitor)
 
 
 class ExperimentMonitorTests(unittest.TestCase):
+    def test_old_review_timeout_is_requeued_once_but_other_failures_are_preserved(self):
+        self.protocol["review_timeout_seconds"] = None
+        trial=self.trial("harness_tools","high","failed")
+        state=monitor.read(trial/"status.json");state["id"]=trial.name;state["error"]="Agent call failed; see calls/review_R2"
+        monitor.write(trial/"status.json",state)
+        monitor.write(trial/"calls/review_R2/usage.json",{"error":"timeout after 1200s","started_at":1})
+        actions=monitor.requeue_legacy_review_timeouts(self.root,self.protocol,[state])
+        self.assertEqual(len(actions),1)
+        self.assertEqual(monitor.read(trial/"status.json")["stage"],"queued")
+        monitor.write(trial/"status.json",state)
+        self.assertEqual(monitor.requeue_legacy_review_timeouts(self.root,self.protocol,[state]),[])
+        monitor.write(trial/"calls/review_R2_attempt2/usage.json",{"error":None,"started_at":2})
+        state["error"]="review_R2 validation failed"
+        self.assertEqual(monitor.requeue_legacy_review_timeouts(self.root,self.protocol,[state]),[])
+
     def test_pool_reserves_distinct_trials_and_respects_pre_gate_admission(self):
         state={"trials":[{"id":"s__single_basic__test__ultra", "scene":"s", "model":"test",
                            "condition":"single_basic", "effort":"ultra", "stage":"queued"},

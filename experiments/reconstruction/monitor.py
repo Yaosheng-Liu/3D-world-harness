@@ -111,10 +111,39 @@ def fill_worker_pool(root, runtime, protocol, state, settings, gate_pending, hel
     return actions
 
 
+def requeue_legacy_review_timeouts(root, protocol, trials):
+    """Apply the no-deadline policy once to reviews started by older workers."""
+    if "review_timeout_seconds" not in protocol or protocol["review_timeout_seconds"] is not None:
+        return []
+    recovered = []
+    for trial in trials:
+        if trial["stage"] != "failed" or "review_R" not in (trial.get("error") or ""):
+            continue
+        run = root/"runs"/trial["id"]
+        calls = sorted(run.glob("calls/review_R*/usage.json"), key=lambda p: read(p).get("started_at", 0))
+        if not calls or not (read(calls[-1]).get("error") or "").startswith("timeout after "):
+            continue
+        marker = run/"resume_history"/f"timeout_{calls[-1].parent.name}.json"
+        if marker.exists():
+            continue
+        state = read(run/"status.json")
+        write(marker, state)
+        state.update(stage="queued", error=None, updated_at=time.time(), recovery="Resume same frozen review without a deadline")
+        write(run/"status.json", state)
+        recovered.append({"at":time.time(), "action":"review_requeued", "trial":trial["id"],
+                          "source_call":str(calls[-1]), "reason":"Previous worker used the superseded review deadline"})
+    if recovered:
+        path = root/"workflow_recoveries.json"
+        write(path, (read(path) if path.exists() else []) + recovered)
+    return recovered
+
+
 def tick(root, runtime):
     state = snapshot(root)
     protocol = read(root / "protocol.json")
-    actions = []
+    actions = requeue_legacy_review_timeouts(root, protocol, state["trials"])
+    if actions:
+        state = snapshot(root)
     finished = sorted((t for t in state["trials"] if t["stage"] in TERMINAL),
                       key=lambda t: t.get("updated_at", 0))
     limit = protocol.get("halt_after_consecutive_failures")
