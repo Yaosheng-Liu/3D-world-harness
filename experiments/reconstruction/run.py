@@ -246,7 +246,8 @@ def feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, pl
         verify_files(project, manifest["files"])
     else:
         if scene_hash(bound) != scene_hash(original):
-            build = build_world(project, scene=bound, render=True, timeout=900)
+            build = build_world(project, scene=bound, render=True, timeout=900,
+                                max_glb_bytes=protocol.get("build_glb_limit_bytes"))
             candidate, receipt = str(bound_path), str(bound_path.parent / "build_receipt.json")
             write(project / receipt, build)
             write(project / bound_path.parent / "migration.json", {
@@ -349,7 +350,8 @@ def run_trial(root, spec, runtime, protocol):
             previous_usage = usage["raw_cumulative_usage"]
             scene = bind_candidate_sources(project, candidate)
             validate_fixed_views(project, scene)
-            build = build_world(project, scene=scene, render=True, timeout=900)
+            build = build_world(project, scene=scene, render=True, timeout=900,
+                                max_glb_bytes=protocol.get("build_glb_limit_bytes"))
             write(project/receipt, build)
             scene, build = freeze_checkpoint(project,run/f"checkpoints/M{checkpoint}",candidate,receipt)
             state["checkpoints"].append({"name":f"M{checkpoint}","candidate":candidate,

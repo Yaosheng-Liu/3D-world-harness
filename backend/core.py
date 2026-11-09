@@ -1445,7 +1445,7 @@ class SceneStore:
             return copy.deepcopy(item)
 
     @staticmethod
-    def _validate_glb_source(local_path: str) -> Path:
+    def _validate_glb_source(local_path: str, *, max_bytes: int | None = None) -> Path:
         if not isinstance(local_path, str) or not local_path:
             raise APIError(400, "local_path must be a file path")
         try:
@@ -1458,8 +1458,9 @@ class SceneStore:
             file_size = source.stat().st_size
         except OSError as exc:
             raise APIError(400, "cannot read model file") from exc
-        if not 20 <= file_size <= MAX_MODEL_BYTES:
-            raise APIError(400, "GLB must be between 20 bytes and 100 MB")
+        limit = MAX_MODEL_BYTES if max_bytes is None else max_bytes
+        if not 20 <= file_size <= limit:
+            raise APIError(400, f"GLB must be between 20 bytes and {limit / 1024**2:g} MB")
         try:
             with source.open("rb") as handle:
                 header = handle.read(12)

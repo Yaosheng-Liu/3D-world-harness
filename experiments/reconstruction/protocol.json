@@ -19,6 +19,7 @@
   "halt_after_consecutive_failures": 2,
   "submission": "Modeler saves candidate, edit targets and code. The two repair phases have no hard time limit; the initial modeling limit is 3600 seconds. Controller binds immutable input lineage and performs the final build for every condition. Record actual time and token usage for every attempt and continuation.",
   "submission_checks": "Engineering checks retain readable schemas, existing resources, fixed cameras and immutable inputs. Reports may correct initial object-view associations using other training frames and include additional exclusions. Visual reconstruction may defer collision geometry. Reviewer prompts and standards are unchanged.",
+  "build_glb_limit_bytes": 268435456,
   "review_timeout_seconds": null,
   "planner_timeout_seconds": 900,
   "training_frames": 48,

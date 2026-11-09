@@ -20,6 +20,24 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "physical_world" / 
 
 
 class WorldBuildTests(unittest.TestCase):
+    def test_offline_glb_budget_does_not_change_default_or_container_checks(self):
+        from core import APIError
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"scene.glb"
+            document = {"asset":{"version":"2.0"}, "scene":0, "scenes":[{"nodes":[0]}],
+                        "nodes":[{"extras":{"stable_id":"cup", "world_role":"object"}}]}
+            data = json.dumps(document).encode()
+            data += b" " * (-len(data) % 4)
+            contents = struct.pack("<4sIII4s", b"glTF", 2, 20+len(data), len(data), b"JSON")+data
+            path.write_bytes(contents)
+            with patch("core.MAX_MODEL_BYTES", len(contents)-1):
+                with self.assertRaises(APIError):
+                    inspect_glb(path, {"cup"})
+                self.assertEqual(inspect_glb(path, {"cup"}, max_bytes=len(contents))["object_ids"], ["cup"])
+                path.write_bytes(b"bad!"+contents[4:])
+                with self.assertRaises(APIError):
+                    inspect_glb(path, {"cup"}, max_bytes=len(contents))
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.project = Path(self.temporary.name)

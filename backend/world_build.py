@@ -56,9 +56,9 @@ def validate_trajectory(trajectory: dict, scene: dict) -> None:
 
 
 def inspect_glb(path: Path, expected_ids: set[str], parents: dict[str, str | None] | None = None,
-                *, textured_ids=(), captured_ids=()) -> dict:
+                *, textured_ids=(), captured_ids=(), max_bytes: int | None = None) -> dict:
     """Reuse the publish gate, then check the stable object identity contract."""
-    SceneStore._validate_glb_source(str(path))
+    SceneStore._validate_glb_source(str(path), max_bytes=max_bytes)
     with path.open("rb") as handle:
         handle.seek(12)
         length, _ = struct.unpack("<I4s", handle.read(8))
@@ -115,7 +115,8 @@ def inspect_glb(path: Path, expected_ids: set[str], parents: dict[str, str | Non
 
 
 def build_world(project_dir: str | Path, *, blender: str = "blender", render: bool = True,
-                trajectory: dict | None = None, scene: dict | None = None, timeout: float = 300) -> dict:
+                trajectory: dict | None = None, scene: dict | None = None, timeout: float = 300,
+                max_glb_bytes: int | None = None) -> dict:
     """Run Blender as a bounded job; only a validated build receives a receipt.
 
     Passing a scene snapshot lets callers publish the exact revision they locked.
@@ -161,7 +162,8 @@ def build_world(project_dir: str | Path, *, blender: str = "blender", render: bo
             raise WorldError("Blender did not produce an editable source file")
         preview = inspect_glb(glb_path, expected_ids, {obj["id"]: obj["parent_id"] for obj in scene["objects"]},
                               textured_ids={obj["id"] for obj in scene["objects"] if "base_color_texture" in obj["material"]},
-                              captured_ids={obj["id"] for obj in scene["objects"] if obj["material"].get("appearance") == "captured"})
+                              captured_ids={obj["id"] for obj in scene["objects"] if obj["material"].get("appearance") == "captured"},
+                              max_bytes=max_glb_bytes)
         if trajectory is not None and preview["animation_count"] != 1:
             raise WorldError("simulation GLB must contain one synchronized animation")
         if trajectory is not None and (abs(preview["animation_start_sec"]) > 1e-6

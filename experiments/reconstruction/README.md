@@ -58,6 +58,8 @@ python3 experiments/reconstruction/monitor.py --root EXP --runtime RUNTIME --int
 
 提交检查允许报告更正跨视角关联、增加计划外排除说明；原始计划和观测保持不变，报告引用仍须指向存在的场景对象和训练帧。视觉重建允许空碰撞体，物理入口仍要求有效碰撞几何。审核提示及标准不随此改动加严。明确恢复的试验保留原失败状态到`resume_history`，通过`validation_recovery.json`记录采用的策略，结果表`submission_policy`标明该试验经过放宽检查的续跑，不与原始失败口径混淆。若完成的建模调用已有候选但尚未冻结，`resume.json`可登记`saved_submission`的检查点、原调用目录和候选SHA；控制器验证后直接构建并进入既定审核，不重复调用建模Agent。
 
+离线构建通过`build_glb_limit_bytes`显式配置GLB预算，当前实验为256MiB；默认工作台导入仍为100MiB。较大的纹理工程继续保留在计算端，恢复构建不改变模型几何或压缩原始纹理，仍校验容器、物体身份及资源一致性。
+
 Token按模型线程最后累计快照去重，叠加独立规划／审核调用；单Agent继承首版和新返修线程分别计入。历史中断和当前调用实际耗时均保留，排除的旧反馈尝试见`excluded_feedback_attempts.json`。私有测试及对象归属检查图不进入任何建模输入。
 
 监控使用已有 `*-coordinator.json`、`report-process.json` 和 `evaluation-process.json` 核对PID及命令。队列控制器退出且没有进行中的试验时，继续尚未启动的项目；有孤立调用则保留现场并在 `MONITOR.md` 标记待处理。后台统计和评测进程退出可恢复，模型失败与评测错误不自动重跑。全部试验结束且现有检查点均得到评价或错误记录后，写入 `automatic_completion.json` 并结束巡检；包含失败时明确记录 `finished_with_errors`，语义编辑核验仍单列。
