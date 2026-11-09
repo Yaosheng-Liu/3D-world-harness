@@ -123,6 +123,29 @@ class ExperimentMonitorTests(unittest.TestCase):
         self.assertTrue((self.root / "launch_hold.json").exists())
         self.assertEqual(result["outcome"], "needs_attention")
 
+    def test_diagnosed_failures_do_not_recreate_hold_but_new_failures_do(self):
+        self.protocol["halt_after_consecutive_failures"] = 2
+        monitor.write(self.root / "protocol.json", self.protocol)
+        trials = [self.trial("single_basic", "ultra", "failed"),
+                  self.trial("harness_tools", "high", "failed")]
+        for trial in trials:
+            state = monitor.read(trial / "status.json")
+            monitor.write(trial / "status.json", {**state, "updated_at": 1})
+        original = [(trial / "status.json").read_bytes() for trial in trials]
+        monitor.write(self.root / "workflow_recoveries.json", [{
+            "action": "resume_queue_after_validation_diagnosis", "at": 2,
+            "previous_hold": {"trials": [trial.name for trial in trials]},
+        }])
+        with patch.object(monitor, "worker_alive", return_value=True):
+            monitor.tick(self.root, self.root / "runtime.json")
+        self.assertFalse((self.root / "launch_hold.json").exists())
+        self.assertEqual([(trial / "status.json").read_bytes() for trial in trials], original)
+        state = monitor.read(trials[0] / "status.json")
+        monitor.write(trials[0] / "status.json", {**state, "updated_at": 3})
+        with patch.object(monitor, "worker_alive", return_value=True):
+            monitor.tick(self.root, self.root / "runtime.json")
+        self.assertTrue((self.root / "launch_hold.json").exists())
+
     def test_full_chain_gate_releases_only_after_all_three_evaluations(self):
         identifier = "s__harness_tools__test__high"
         monitor.write(self.root / "execution_gate.json", {"trial": identifier})

@@ -149,7 +149,15 @@ def tick(root, runtime):
     limit = protocol.get("halt_after_consecutive_failures")
     hold = root / "launch_hold.json"
     if limit and len(finished) >= limit and all(t["stage"] == "failed" for t in finished[-limit:]):
-        if not hold.exists():
+        recent = finished[-limit:]
+        history = root / "workflow_recoveries.json"
+        diagnosed = any(
+            record.get("action") == "resume_queue_after_validation_diagnosis"
+            and set(record["previous_hold"]["trials"]) == {t["id"] for t in recent}
+            and record["at"] >= max(t.get("updated_at", 0) for t in recent)
+            for record in (read(history) if history.exists() else [])
+        )
+        if not hold.exists() and not diagnosed:
             write(hold, {"at": time.time(), "reason": "Consecutive trial failures require diagnosis",
                          "trials": [t["id"] for t in finished[-limit:]]})
     gate_path = root / "execution_gate.json"
