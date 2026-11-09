@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import time
 
-from common import cli_usage, digest, matrix, read, thread_usage, write
+from common import cli_usage, digest, matrix, model_handoff, read, thread_usage, write
 from run import initialize_run
 from reconstruction_review import verify_files
 from world_model import validate_scene
@@ -37,21 +37,6 @@ def clean_single_project(source, project):
                                         if (project / row["path"]).is_file()]
     write(path, scene)
     validate_scene(scene, project)
-
-
-def model_handoff(source):
-    processes = sorted(source.glob("calls/model_M*/process.json"), key=lambda p: read(p)["started_at"])
-    if not processes:
-        return {"thread_id": None, "raw_cumulative_usage": None}
-    call = processes[-1].parent
-    usage = read(call/"usage.json") if (call/"usage.json").exists() else cli_usage(call/"events.jsonl")
-    thread = usage.get("thread_id") or read(call/"process.json").get("thread_id")
-    raw = dict(usage.get("raw_cumulative_usage", usage["usage"]))
-    snapshot = thread_usage(source/"homes/modeler", thread) if thread else {}
-    for key in raw:
-        if raw[key] is None:
-            raw[key] = snapshot.get(key)
-    return {"thread_id": thread, "raw_cumulative_usage": raw}
 
 
 def copy_calls(source, run, single):

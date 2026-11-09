@@ -94,6 +94,21 @@ def thread_usage(home, thread_id):
     return snapshot
 
 
+def model_handoff(source):
+    processes = sorted(source.glob("calls/model_M*/process.json"), key=lambda p: read(p)["started_at"])
+    if not processes:
+        return {"thread_id": None, "raw_cumulative_usage": None}
+    call = processes[-1].parent
+    usage = read(call/"usage.json") if (call/"usage.json").exists() else cli_usage(call/"events.jsonl")
+    thread = usage.get("thread_id") or read(call/"process.json").get("thread_id")
+    raw = dict(usage.get("raw_cumulative_usage", usage["usage"]))
+    snapshot = thread_usage(source/"homes/modeler", thread) if thread else {}
+    for key in raw:
+        if raw[key] is None:
+            raw[key] = snapshot.get(key)
+    return {"thread_id": thread, "raw_cumulative_usage": raw}
+
+
 def bind_candidate_sources(project, candidate):
     """The controller owns immutable input lineage; the agent owns scene content."""
     scene = read(project / candidate)

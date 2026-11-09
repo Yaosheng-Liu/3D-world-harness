@@ -15,6 +15,31 @@ SPEC.loader.exec_module(runner)
 
 
 class ExperimentAgentTests(unittest.TestCase):
+    def test_interrupted_review_reuses_frozen_candidate_without_rebuilding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project, trial = Path(directory)/"project", Path(directory)/"trial"
+            scene={"objects":[],"provenance":{"sources":[]}}
+            runner.write(project/"models/M1/candidate.json", scene)
+            runner.write(project/"reviews/R2/candidate.json", {"scene_hash":runner.scene_hash(scene),"files":{}})
+            runner.write(project/"reviews/R2/inspection.json", {"inspection_paths":[],"depth":{"inspection_paths":[]}})
+            runner.write(project/"reviews/R2/editability.json", {})
+            runner.write(trial/"calls/review_R2/usage.json", {"error":"original timeout"})
+            def review(*args,**kwargs):
+                runner.write(args[1]/"response.json", {"candidate_id":"same"})
+            with patch.object(runner,"bind_candidate_sources",return_value=scene), \
+                 patch.object(runner,"verify_files"), patch.object(runner,"validate_review"), \
+                 patch.object(runner,"review_schema",return_value={}), patch.object(runner,"review_prompt",return_value="review"), \
+                 patch.object(runner,"role_home",return_value=trial/"home"), \
+                 patch.object(runner,"agent",side_effect=review) as agent, \
+                 patch.object(runner,"build_world") as build, patch.object(runner,"freeze_candidate") as freeze:
+                path=runner.feedback(project,trial,{}, {"reviewer":{},"review_timeout_seconds":None},
+                                     1,"models/M1/candidate.json","receipt", "plan", None)
+            self.assertEqual(path,"reviews/R2/review.json")
+            self.assertIsNone(agent.call_args.kwargs["timeout"])
+            self.assertEqual(agent.call_args.args[1].name,"review_R2_attempt2")
+            build.assert_not_called();freeze.assert_not_called()
+            self.assertEqual(runner.read(trial/"calls/review_R2/usage.json")["error"],"original timeout")
+
     def test_valid_existing_review_is_reused_without_another_reviewer_call(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

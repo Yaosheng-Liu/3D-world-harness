@@ -11,7 +11,7 @@ import time
 import uuid
 
 from common import (REPO, bind_candidate_sources, camera_manifest, cli_usage, digest,
-                    matrix, read, thread_usage, write)
+                    matrix, model_handoff, read, thread_usage, write)
 
 sys.path[:0] = [str(REPO / "backend"), str(REPO / "scripts")]
 from reconstruction_plan import MODEL_REPORT_SCHEMA, PLAN_SCHEMA
@@ -239,18 +239,24 @@ def feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, pl
     bound_path = Path("review_bindings") / f"M{checkpoint}" / "candidate.json"
     write(project / bound_path, original)
     bound = bind_candidate_sources(project, bound_path)
-    if scene_hash(bound) != scene_hash(original):
-        build = build_world(project, scene=bound, render=True, timeout=900)
-        candidate, receipt = str(bound_path), str(bound_path.parent / "build_receipt.json")
-        write(project / receipt, build)
-        write(project / bound_path.parent / "migration.json", {
-            "original_scene_hash": scene_hash(original), "review_scene_hash": scene_hash(bound),
-            "geometry_and_views_unchanged": original["objects"] == bound["objects"] and original["views"] == bound["views"]})
-    frozen = next_attempt(project / "reviews", f"R{number}")
-    manifest = freeze_candidate(project, candidate, receipt, frozen, blender=runtime["blender"],
-        previous_review=project/previous if previous else None, plan_path=plan,
-        segments_path="evidence/segments/segments.json", geometry_path="evidence/geometry/geometry.json",
-        modeling_report_path=f"models/M{checkpoint}/modeling_report.json")
+    ready = sorted((project/"reviews").glob(f"R{number}*/candidate.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cached = next((p for p in ready if read(p)["scene_hash"] == scene_hash(bound)), None)
+    if cached:
+        frozen, manifest = cached.parent, read(cached)
+        verify_files(project, manifest["files"])
+    else:
+        if scene_hash(bound) != scene_hash(original):
+            build = build_world(project, scene=bound, render=True, timeout=900)
+            candidate, receipt = str(bound_path), str(bound_path.parent / "build_receipt.json")
+            write(project / receipt, build)
+            write(project / bound_path.parent / "migration.json", {
+                "original_scene_hash": scene_hash(original), "review_scene_hash": scene_hash(bound),
+                "geometry_and_views_unchanged": original["objects"] == bound["objects"] and original["views"] == bound["views"]})
+        frozen = next_attempt(project / "reviews", f"R{number}")
+        manifest = freeze_candidate(project, candidate, receipt, frozen, blender=runtime["blender"],
+            previous_review=project/previous if previous else None, plan_path=plan,
+            segments_path="evidence/segments/segments.json", geometry_path="evidence/geometry/geometry.json",
+            modeling_report_path=f"models/M{checkpoint}/modeling_report.json")
     inspection, edit = read(frozen/"inspection.json"), read(frozen/"editability.json")
     images = (inspection["inspection_paths"] + inspection.get("overlay_paths", []) +
               inspection["depth"].get("inspection_paths", []) + manifest.get("source_inspection_paths", []) +
@@ -289,6 +295,10 @@ def run_trial(root, spec, runtime, protocol):
             plan = planning(project, run, runtime, protocol)
         thread = seed.get("thread_id") if seeded else None
         previous_usage = seed.get("raw_cumulative_usage") if seeded else None
+        if seeded:
+            handoff = model_handoff(run)
+            if handoff["thread_id"]:
+                thread, previous_usage = handoff["thread_id"], handoff["raw_cumulative_usage"]
         previous, start = None, len(state["checkpoints"])
         for number in range(start):
             verify_files(run/f"checkpoints/M{number}", read(run/f"checkpoints/M{number}/frozen.json")["files"])

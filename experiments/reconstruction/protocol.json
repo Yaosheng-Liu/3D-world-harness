@@ -18,7 +18,7 @@
   "modeling_timeout_seconds": [3600, null, null],
   "halt_after_consecutive_failures": 2,
   "submission": "Modeler saves candidate, edit targets and code. The two repair phases have no hard time limit; the initial modeling limit is 3600 seconds. Controller binds immutable input lineage and performs the final build for every condition. Record actual time and token usage for every attempt and continuation.",
-  "review_timeout_seconds": 1200,
+  "review_timeout_seconds": null,
   "planner_timeout_seconds": 900,
   "training_frames": 48,
   "camera_manifest": "cameras.json contains every training and validation pose; identical in all conditions",

@@ -12,6 +12,17 @@ SPEC.loader.exec_module(common)
 
 
 class ExperimentUsageTests(unittest.TestCase):
+    def test_restart_handoff_uses_latest_model_phase_not_initial_thread_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trial=Path(directory)
+            for phase,started,value in (("M0",1,100),("M1",2,250)):
+                common.write(trial/f"calls/model_{phase}/process.json", {"started_at":started,"thread_id":"original"})
+                common.write(trial/f"calls/model_{phase}/usage.json", {"thread_id":"continued-thread", "usage":{},
+                             "raw_cumulative_usage":{"input_tokens":value}})
+            result=common.model_handoff(trial)
+            self.assertEqual(result["thread_id"],"continued-thread")
+            self.assertEqual(result["raw_cumulative_usage"]["input_tokens"],250)
+
     def test_continuation_counts_thread_prefix_once_and_includes_new_context(self):
         def call(thread, started, value):
             return {"phase_role":"modeler", "thread_id":thread, "started_at":started,
