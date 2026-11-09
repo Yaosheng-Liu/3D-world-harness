@@ -1,0 +1,4 @@
+condition,trials,psnr_db_improved,ssim_improved,lpips_alex_improved,first_hit_capped_relative_error_including_missing_improved,point_to_surface_capped_relative_distance_including_missing_improved
+single_basic,6,5,4,6,5,5
+single_tools,6,2,4,5,5,5
+harness_tools,12,0,0,0,9,6

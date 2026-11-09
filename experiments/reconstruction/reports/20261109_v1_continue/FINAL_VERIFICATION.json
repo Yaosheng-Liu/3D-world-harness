@@ -1,0 +1,20 @@
+{
+  "verified_at": "2026-11-10T02:07:51+08:00",
+  "trials": 24,
+  "evaluations": 72,
+  "views_per_checkpoint": 12,
+  "frozen_scene_hashes_match": true,
+  "max_projection_error_px": 0.000220326182898134,
+  "paired_token_counters_consistent": true,
+  "final_edit_rate_counts": {
+    "0.8": 3,
+    "1.0": 21
+  },
+  "semantic_edit_verification": "pending_independent_visual_check",
+  "submission_policy_counts": {
+    "minimal_submission_checks_v2": 6,
+    "offline_glb_budget_v1": 1,
+    "original": 17
+  },
+  "object_or_triangle_budget_violations": []
+}
