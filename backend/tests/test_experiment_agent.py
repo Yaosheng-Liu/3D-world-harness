@@ -46,6 +46,9 @@ class ExperimentAgentTests(unittest.TestCase):
             runner.write(trial/"status.json", {"stage":"queued", "started_at":0, "checkpoints":[initial]})
             runner.write(trial/"input_hashes.json", {})
             runner.write(trial/"checkpoints/M0/frozen.json", {"files":{}})
+            working = root/"working"
+            working.mkdir()
+            (trial/"project").symlink_to(working, target_is_directory=True)
             usage = {"thread_id":"new-repair", "raw_cumulative_usage":{"input_tokens":10}, "usage":{"input_tokens":10}}
             protocol = {"modeling_passes":3, "modeling_timeout_seconds":[3600,None,None],
                         "input_prompt":"Build", "repair_prompt":"Revise"}
@@ -59,6 +62,7 @@ class ExperimentAgentTests(unittest.TestCase):
                 runner.run_trial(root, spec, {}, protocol)
             initialize.assert_not_called()
             self.assertEqual(agent.call_count, 2)
+            self.assertEqual(agent.call_args_list[0].args[0], working)
             self.assertIsNone(agent.call_args_list[0].kwargs["thread"])
             self.assertEqual(agent.call_args_list[1].kwargs["thread"], "new-repair")
             self.assertTrue(all(c.kwargs["timeout"] is None for c in agent.call_args_list))

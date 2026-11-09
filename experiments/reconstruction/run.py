@@ -282,7 +282,7 @@ def run_trial(root, spec, runtime, protocol):
         state.update(stage=stage,updated_at=time.time(),**fields)
         write(run / "status.json", state)
     try:
-        project = run / "project" if seeded else initialize_run(root, run, spec, runtime)
+        project = (run / "project").resolve() if seeded else initialize_run(root, run, spec, runtime)
         plan = seed.get("plan") if seeded else None
         if spec["condition"] == "harness_tools" and not plan:
             update("planning")
