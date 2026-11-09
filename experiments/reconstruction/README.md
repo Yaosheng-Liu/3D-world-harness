@@ -20,6 +20,7 @@
 | `evaluate.py` | 私有评估调度与 CSV/JSON 汇总 |
 | `evaluate_blender.py` | 固定测试渲染、世界坐标几何导出、编辑与保存重开检查 |
 | `image_metrics.py` | PSNR、SSIM、AlexNet LPIPS |
+| `texture_ablation.py` / `texture_ablation_blender.py` | 冻结模型的已有纹理／统一灰模配对渲染 |
 | `report.py` | 只读队列进度与各角色实时累计 Token 摘要 |
 | `monitor.py` | 每5分钟核对队列与评测进度，恢复退出的后台服务，保留失败和孤立调用 |
 | `sync_records.py` | 将允许清单内的统计和检查图同步到本机，不复制认证或会话 |
@@ -51,6 +52,16 @@ python3 experiments/reconstruction/run.py --root EXP --runtime RUNTIME
 python3 experiments/reconstruction/evaluate.py --root EXP --runtime RUNTIME
 python3 experiments/reconstruction/monitor.py --root EXP --runtime RUNTIME --interval 300
 ```
+
+对已完成的M2补充外观消融，无需重新调用Agent：
+
+```bash
+python3 experiments/reconstruction/texture_ablation.py --root EXP --runtime RUNTIME --output ABLATION --workers 2
+```
+
+两套渲染共用冻结几何和12个测试相机，统一为粗糙度0.8、金属度0的受光材质，以及固定参数的相机随动诊断灯、环境光、Standard色彩映射和32次Cycles采样。`textured`保留已有纹理或原常量颜色；`clay`替换为统一线性RGB 0.5，不保留纹理或原对象颜色。原本没有纹理的对象不会补造贴图，覆盖数量写入结果。这是捕获外观与中性灰模的诊断对照，不是精确分离纹理频率的实验，也不声称恢复了真实照明。灰模对原RGB的PSNR/SSIM/LPIPS仅作为诊断，不能作为几何质量指标；几何指标复用同一冻结版本原有测量。
+
+消融只写独立目录，检查输入工程SHA、几何不变与相机投影，保留逐视角图像、指标及统计。`--trial`可先验证一组，后续省略该参数时复用已完成结果；`--checkpoint`可显式选择M0或M1。私有视角和诊断结果不进入Agent输入包。
 
 运行根目录一经创建不自动重跑失败试验；再次启动跳过已有目录。基础设施修复和实验失败均应保留记录，新的试验需建立新的协议目录。评价失败保存 error.json，修复后显式处理，不循环静默重试。`--model`、`--scene`、`--condition` 和 `--effort` 可限定运行队列。
 
