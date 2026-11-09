@@ -226,6 +226,15 @@ class ReviewGateTests(unittest.TestCase):
         issue.update(region=[0,0,1,1], object_id="imaginary")
         with self.assertRaises(ValueError): validate_review(self.manifest, review)
 
+    def test_revision_checklist_may_include_extra_names_without_accepting_them(self):
+        review = {**review_fixture(), "verdict": "revise", "checked_objects": ["bed", "wall", "old_cabinet"]}
+        self.assertFalse(validate_review(self.manifest, review))
+        self.assertEqual(review["checked_objects"], ["bed", "wall", "old_cabinet"])
+        with self.assertRaises(ValueError):
+            validate_review(self.manifest, {**review, "verdict": "accepted"})
+        with self.assertRaises(ValueError):
+            validate_review(self.manifest, {**review, "reviewed_views": ["imaginary"]})
+
     def test_cumulative_resolutions_must_be_known_and_cannot_hide_open_issues(self):
         issue = {"id": "bed-back", "object_id": "bed", "view_id": "back", "region": [.1,.1,.8,.8],
                  "severity": "major", "evidence": "missing back", "acceptance_criterion": "complete back"}

@@ -356,7 +356,9 @@ def validate_review(manifest, review, previous=None):
     required_objects = set(manifest["object_ids"]) | set(manifest.get("required_object_ids", []))
     views = set(manifest["view_ids"]) | set(manifest.get("source_view_ids", []))
     issue_objects = objects | ({"scene"} if manifest.get("plan_path") else set())
-    if not set(review["reviewed_views"]) <= views or not set(review["checked_objects"]) <= objects:
+    accepted = review["verdict"] == "accepted"
+    # A revision checklist may also mention renamed or missing objects.
+    if not set(review["reviewed_views"]) <= views or (accepted and not set(review["checked_objects"]) <= objects):
         raise ValueError("review refers to unknown objects or views")
     ids = [issue["id"] for issue in review["issues"]]
     if len(ids) != len(set(ids)):
@@ -376,7 +378,6 @@ def validate_review(manifest, review, previous=None):
         raise ValueError(f"issues cannot be both open and resolved: {sorted(resolved & set(ids))}")
     if old - (resolved | set(ids)):
         raise ValueError(f"every previous issue must be rechecked, resolved or retained: {sorted(old - (resolved | set(ids)))}")
-    accepted = review["verdict"] == "accepted"
     if accepted and (not all(manifest["checks"].values())
                      or any(review["dimensions"][key] != "passed" for key in DIMENSIONS)
                      or views != set(review["reviewed_views"])
