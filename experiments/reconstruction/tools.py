@@ -31,7 +31,8 @@ def main():
     started = time.time()
     if args.operation == "build":
         from world_build import build_world
-        result = build_world(project, scene=bind_candidate_sources(project, args.scene), render=True, timeout=900)
+        result = build_world(project, scene=bind_candidate_sources(project, args.scene), render=True, timeout=900,
+                             max_glb_bytes=runtime.get("build_glb_limit_bytes"))
         output = project / args.scene.parent / "build_receipt.json"
         write(output, result)
         result = {"receipt_path": str(output), "blend_path": result["blend_path"],

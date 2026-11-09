@@ -31,6 +31,10 @@ def material(name, spec, project=None):
     if not captured:
         shader.inputs["Roughness"].default_value = spec["roughness"]
         shader.inputs["Metallic"].default_value = spec["metallic"]
+        shader.inputs["Emission Color"].default_value = (*spec.get("emission_color", [1, 1, 1]), 1)
+        shader.inputs["Emission Strength"].default_value = spec.get("emission_strength", 0)
+        shader.inputs["Transmission Weight"].default_value = spec.get("transmission", 0)
+        shader.inputs["IOR"].default_value = spec.get("ior", 1.5)
     if "base_color_texture" in spec:
         texture = nodes.new("ShaderNodeTexImage")
         texture.image = bpy.data.images.load(str(project / spec["base_color_texture"]), check_existing=True)
@@ -270,6 +274,34 @@ def check_projection(scene, camera, view, *, probe_distance=1):
     return {"max_projection_error_px": error, "width": k["width"], "height": k["height"]}
 
 
+def configure_lighting(scene, source, roots):
+    scene.world = bpy.data.worlds.new("World lighting")
+    scene.world.use_nodes = True
+    lighting = source.get("lighting")
+    if lighting is None:
+        lighting = {"environment": {"color": [.18, .20, .24], "strength": .4}, "lights": [
+            {"id": name, "type": "area", "position": position,
+             "rotation": list((-Vector(position)).to_track_quat("-Z", "Y").to_euler()),
+             "color": [1, 1, 1], "energy": energy, "size": size}
+            for name, position, energy, size in (("Key", (0, -3, 5), 800, 4), ("Fill", (-3, 1, 3), 450, 3))]}
+    background = scene.world.node_tree.nodes["Background"]
+    background.inputs["Color"].default_value = (*lighting["environment"]["color"], 1)
+    background.inputs["Strength"].default_value = lighting["environment"]["strength"]
+    for spec in lighting["lights"]:
+        data = bpy.data.lights.new(spec["id"], spec["type"].upper())
+        light = bpy.data.objects.new("Light/" + spec["id"], data)
+        scene.collection.objects.link(light)
+        light.parent = roots.get(spec.get("parent_id"))
+        light.location, light.rotation_euler = spec["position"], spec["rotation"]
+        data.energy, data.color = spec["energy"], spec["color"]
+        if data.type == "AREA":
+            data.shape, data.size = "DISK", spec.get("size", 1)
+        else:
+            data.shadow_soft_size = spec.get("size", .25)
+        if data.type == "SPOT":
+            data.spot_size, data.spot_blend = spec.get("spot_size", math.pi / 4), spec.get("spot_blend", .5)
+
+
 def build(job):
     source, project, output = job["scene"], Path(job["project_dir"]), Path(job["output_dir"])
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -317,15 +349,7 @@ def build(job):
     before = inventory(roots)
     scene["world_scene_json"] = json.dumps(source, ensure_ascii=False)
     scene["world_scene_hash"] = job["scene_hash"]
-    scene.world = bpy.data.worlds.new("World lighting")
-    scene.world.use_nodes = True
-    scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.18, 0.20, 0.24, 1)
-    scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.4
-    for name, location, energy, size in (("Key", (0, -3, 5), 800, 4), ("Fill", (-3, 1, 3), 450, 3)):
-        light = bpy.data.objects.new(name, bpy.data.lights.new(name, "AREA"))
-        scene.collection.objects.link(light)
-        light.location, light.data.energy, light.data.shape, light.data.size = location, energy, "DISK", size
-        light.rotation_euler = (-Vector(location)).to_track_quat("-Z", "Y").to_euler()
+    configure_lighting(scene, source, roots)
     cameras = {}
     for view in source["views"]:
         camera = bpy.data.objects.new("Camera/" + view["id"], bpy.data.cameras.new(view["id"]))
@@ -347,9 +371,10 @@ def build(job):
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.film_transparent = True
-    scene.view_settings.view_transform = "Standard" if any(captured) else "AgX"
+    color_management = source.get("color_management", {"view_transform": "Standard" if any(captured) else "AgX", "exposure": 0})
+    scene.view_settings.view_transform = color_management["view_transform"]
     scene.view_settings.look = "None"
-    scene.view_settings.exposure, scene.view_settings.gamma = 0, 1
+    scene.view_settings.exposure, scene.view_settings.gamma = color_management["exposure"], 1
     for view in source["views"]:
         configure_camera(scene, cameras[view["id"]], view)
     configure_camera(scene, scene.camera, source["views"][0])

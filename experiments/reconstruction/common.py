@@ -112,8 +112,14 @@ def model_handoff(source):
 def bind_candidate_sources(project, candidate):
     """The controller owns immutable input lineage; the agent owns scene content."""
     scene = read(project / candidate)
+    spec = read(project / "experiment.json")
+    if spec.get("appearance_regime"):
+        from reconstruction_appearance import validate_appearance
+        validate_appearance(scene, spec["appearance_regime"])
+        # Both new regimes use the same display transform regardless of shader type.
+        scene["color_management"] = {"view_transform": "Standard", "exposure": 0}
     names = ["observations/manifest.json", "cameras.json"]
-    if read(project / "experiment.json")["condition"] != "single_basic":
+    if spec["condition"] != "single_basic":
         names += ["dense/inference.json", "reconstruction_report.json"]
     sources = scene["provenance"]["sources"]
     existing = {source["path"] for source in sources}
@@ -156,7 +162,8 @@ def matrix(protocol):
     for model in protocol["models"]:
         for condition in protocol["conditions"]:
             rows.append({"model": model, "condition": condition, "effort": protocol["main_effort"]})
-        rows.append({"model": model, "condition": "harness_tools", "effort": protocol["ablation_effort"]})
+        if protocol.get("ablation_effort"):
+            rows.append({"model": model, "condition": "harness_tools", "effort": protocol["ablation_effort"]})
     return rows
 
 

@@ -17,7 +17,7 @@ def sync(remote, source, destination):
     code = f"""import pathlib,sys,tarfile
 root=pathlib.Path({str(source)!r}).resolve()
 patterns=('protocol.json','registered_protocol.json','inputs.json','initialization_summary.json',
-          'preparation_deviations.json','workflow_incident.json','execution_gate.json','launch_hold.json',
+          'preparation_deviations.json','preparation.json','workflow_incident.json','execution_gate.json','launch_hold.json',
           'continuation_manifest.json','excluded_feedback_attempts.json',
           'scheduler.json','parallelism_history.json',
           'workflow_recoveries.json','runs/*/resume_history/*.json',

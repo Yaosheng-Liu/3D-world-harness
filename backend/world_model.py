@@ -38,6 +38,12 @@ _TEXT = {"type": "string", "minLength": 1}
 _ID = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_-]*$"}
 _VEC3 = _vector(3)
 _TRANSFORM = {"position": _VEC3, "rotation": _VEC3}
+_LIGHT = _record({
+    "id": _ID, "type": {"enum": ["area", "point", "spot"]}, **_TRANSFORM,
+    "color": _vector(3, _UNIT), "energy": _NONNEGATIVE, "size": _POSITIVE,
+    "spot_size": {"type": "number", "exclusiveMinimum": 0, "maximum": math.pi},
+    "spot_blend": _UNIT, "parent_id": {"anyOf": [_ID, {"type": "null"}]},
+}, ["id", "type", "position", "rotation", "color", "energy"])
 _SHAPES = {
     "box": {"size": _vector(3, _POSITIVE)},
     "sphere": {"radius": _POSITIVE},
@@ -57,7 +63,9 @@ _OBJECT = _record({
     "parent_id": {"anyOf": [_ID, {"type": "null"}]}, **_TRANSFORM,
     "visual": _shapes(_SHAPES), "collision": _shapes(("box", "sphere", "cylinder"), minimum=0),
     "material": _record({"base_color": _vector(4, _UNIT), "roughness": _UNIT, "metallic": _UNIT,
-                         "base_color_texture": _TEXT, "appearance": {"enum": ["surface", "captured"]}},
+                         "base_color_texture": _TEXT, "appearance": {"enum": ["surface", "captured"]},
+                         "emission_color": _vector(3, _UNIT), "emission_strength": _NONNEGATIVE,
+                         "transmission": _UNIT, "ior": _POSITIVE},
                         ["base_color", "roughness", "metallic"]),
     "physics": _record({"body_type": {"enum": ["static", "dynamic"]},
                         "mass": _NONNEGATIVE, "friction": _NONNEGATIVE}),
@@ -74,6 +82,9 @@ _OBJECT = _record({
 WORLD_SCHEMA = _record({
     "schema_version": {"const": 1}, "revision": {"type": "integer", "minimum": 1},
     "scene_id": _ID, "name": _TEXT, "units": {"enum": ["m", "arbitrary"]}, "up_axis": {"const": "Z"},
+    "lighting": _record({"environment": _record({"color": _vector(3, _UNIT), "strength": _NONNEGATIVE}),
+                         "lights": {"type": "array", "items": _LIGHT}}),
+    "color_management": _record({"view_transform": {"enum": ["Standard", "AgX"]}, "exposure": {"type": "number"}}),
     "provenance": _record({"kind": {"enum": ["synthetic", "reconstruction"]},
                            "description": _TEXT,
                            "sources": {"type": "array", "items": _record({"path": _TEXT, "description": _TEXT})}}),
@@ -88,7 +99,7 @@ WORLD_SCHEMA = _record({
                                "fx": _POSITIVE, "fy": _POSITIVE, "cx": {"type": "number"}, "cy": {"type": "number"}}),
         "reference_image": _TEXT,
     })]}},
-})
+}, ["schema_version", "revision", "scene_id", "name", "units", "up_axis", "provenance", "objects", "views"])
 _VALIDATOR = Draft202012Validator(WORLD_SCHEMA)
 _EDITABLE_FIELDS = set(_OBJECT["properties"]) - {"id"}
 
@@ -144,6 +155,12 @@ def validate_scene(scene, project_dir=None):
     objects = {obj["id"]: obj for obj in scene["objects"]}
     if len(objects) != len(scene["objects"]):
         raise WorldError("Object IDs must be unique")
+    lights = scene.get("lighting", {}).get("lights", [])
+    if len({light["id"] for light in lights}) != len(lights):
+        raise WorldError("Light IDs must be unique")
+    for light in lights:
+        if light.get("parent_id") is not None and light["parent_id"] not in objects:
+            raise WorldError(f"{light['id']}: unknown light parent {light['parent_id']}")
     for obj in objects.values():
         if obj["material"]["base_color"][3] != 1:
             raise WorldError(f"{obj['id']}: version 1 supports opaque materials only (alpha=1)")

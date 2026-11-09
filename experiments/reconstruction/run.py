@@ -15,6 +15,7 @@ from common import (REPO, bind_candidate_sources, camera_manifest, cli_usage, di
 
 sys.path[:0] = [str(REPO / "backend"), str(REPO / "scripts")]
 from reconstruction_plan import MODEL_REPORT_SCHEMA, PLAN_SCHEMA
+from reconstruction_appearance import appearance_instruction
 from reconstruction_review import freeze_candidate, review_schema, validate_review, validate_fixed_views, verify_files
 from review_reconstruction import review_prompt
 from run_reconstruction import run_planner
@@ -132,25 +133,38 @@ def initialize_run(root, run, spec, runtime):
                  "physics":{"body_type":"static","mass":0,"friction":.5},
                  "evidence":{"geometry":"estimated","physics":"estimated","notes":"Schema only"}}]}
     scene["views"] = views
+    if protocol.get("appearance_regime"):
+        scene["color_management"] = {"view_transform": "Standard", "exposure": 0}
     write(project / "world/scene.json", scene)
     write(project / "experiment.json", spec)
     write(project / "edit_task_targets.json", read(root / "protocol.json")["edit_targets"][spec["scene"]])
-    write(project / "tool_runtime.json", {k: runtime[k] for k in
-          ("da3_code","geometry_image","segmentation_image","sam_code","sam_weights","blender")})
-    write(project / "plan_schema.json", PLAN_SCHEMA)
-    (project / "AGENTS.md").write_text(f"""# Experiment task packet
+    write(project / "tool_runtime.json", {**{k: runtime[k] for k in
+          ("da3_code","geometry_image","segmentation_image","sam_code","sam_weights","blender")},
+          "build_glb_limit_bytes": protocol.get("build_glb_limit_bytes")})
+    if spec["condition"] != "single_basic":
+        write(project / "plan_schema.json", PLAN_SCHEMA)
+    packet = f"""# Experiment task packet
 Only read this project and generic implementation at {REPO}. Do not read experiment siblings, old models, source dataset directories, private evaluation images or other agents' sessions. No web/asset download or additional agent delegation. Physics is deferred.
-Input: observations/manifest.json, images, cameras.json (all training and validation poses), training_contact_sheet.jpg. Preserve these inputs and world/scene.json. Six calibrated validation cameras in world/scene.json must remain unchanged in every candidate. The schema-only object (if present) is not scene geometry. Separate visible objects and give stable IDs. Captured appearance may use only supplied images; no camera-facing photo planes. Unseen geometry must be marked estimated.
+Input: observations/manifest.json, images, cameras.json (all training and validation poses), training_contact_sheet.jpg. Preserve these inputs and world/scene.json. Six calibrated validation cameras in world/scene.json must remain unchanged in every candidate. The schema-only object (if present) is not scene geometry. Separate visible objects and give stable IDs. Unseen geometry must be marked estimated.
 Scene JSON format: follow world/scene.json and {REPO}/backend/world_model.py. Save candidate.json, edit_targets.json, scripts and assets early inside each checkpoint's model directory. Finish your turn within its time budget. The controller builds and validates your saved candidate after the turn; no self-written receipt is required. Optional preview: python3 {Path(__file__).with_name('tools.py')} --project {project} build --scene <candidate.json>. Preserve prior checkpoints, inputs, world coordinates and units. Maximum 256 objects and 1,000,000 visual triangles. Do not modify implementation or experiment records.
 Common editing tasks are listed in edit_task_targets.json. Next to each candidate write edit_targets.json mapping each listed key to the corresponding scene object ID, or null if the target is missing or unresolved. This declaration will be independently inspected; naming an object is not evidence of correct ownership.
 Specialist tools are enabled only for tool conditions: use tools.py segment --plan <plan.json> --output <new-dir>; geometry --plan <plan.json> --segments <segments.json> --output <new-dir>; depth --receipt <build_receipt.json>; triangulate --receipt <receipt> --landmarks <landmarks.json>. A self-authored plan must follow plan_schema.json. Do not run specialist tools in single_basic. Tools do not certify reconstruction correctness.
-""")
+"""
     if spec["condition"] != "harness_tools":
-        with (project / "AGENTS.md").open("a") as packet:
-            packet.write("Single-agent condition: use the original inputs and previous scene to revise independently. "
-                         "No external review feedback or harness-generated reference/render panels, overlays or RGB-error maps "
-                         "are supplied. Do not invoke the harness review/inspection generators. Ordinary Blender modeling "
-                         "and standalone model previews remain available.\n")
+        packet = f"""根据原始图像独立重建并修订场景，物体可独立编辑，保存建模源码。物理暂不处理，无须先提交计划或物体清单。
+输入见observations/manifest.json、cameras.json和training_contact_sheet.jpg；保留原始输入、坐标系和world/scene.json中的六台相机。仅查看本项目及{REPO}通用代码，不读其他实验、旧模型或私有评测，不下载外部素材或调用额外Agent。
+输出指定目录的candidate.json与edit_targets.json（对应edit_task_targets.json；找不到的目标填null）；格式见world/scene.json及{REPO}/backend/world_model.py。上限256对象、100万三角形；未知几何标estimated。控制器负责最终构建，按需做普通Blender预览。工具说明见TOOLS.md。
+不提供外部审核，不调用Harness审核材料生成器、原图/渲染对照面板、叠图或RGB差异图。
+"""
+    packet += appearance_instruction(protocol.get("appearance_regime")) + "\n"
+    if protocol.get("appearance_regime"):
+        packet += f"灯光和材质字段示例按需查阅{REPO}/experiments/reconstruction/APPEARANCE.md。\n"
+    (project / "AGENTS.md").write_text(packet)
+    (project / "TOOLS.md").write_text(
+        f"场景预览：python3 {Path(__file__).with_name('tools.py')} --project {project} build --scene <candidate.json>\n"
+        + ("本组不使用专业分割、深度或重建工具。\n" if spec["condition"] == "single_basic" else
+           f"专业工具：python3 {Path(__file__).with_name('tools.py')} --help。可按需调用segment、geometry、depth、triangulate；"
+           "segment/geometry需要的请求格式见plan_schema.json。这里的工具请求不要求独立计划Agent。\n"))
     validate_scene(scene, project)
     protected = [p for p in (project / "observations").rglob("*") if p.is_file()]
     if spec["condition"] != "single_basic":
@@ -158,7 +172,7 @@ Specialist tools are enabled only for tool conditions: use tools.py segment --pl
         protected.append(project / "reconstruction_report.json")
     protected += [project / name for name in ("split_manifest.json", "calibration_audit.json",
                   "training_contact_sheet.jpg", "cameras.json", "world/scene.json", "experiment.json", "AGENTS.md",
-                  "edit_task_targets.json", "tool_runtime.json")]
+                  "edit_task_targets.json", "tool_runtime.json", "TOOLS.md")]
     write(run / "input_hashes.json", {str(p.relative_to(project)): digest(p) for p in protected})
     return project
 
@@ -264,7 +278,8 @@ def feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, pl
               edit.get("inspection_paths", []))
     call = next_attempt(run / "calls", f"review_R{number}")
     agent(project, call, runtime, protocol["reviewer"], role_home(run, "reviewer", runtime),
-          review_prompt(project, frozen, project/previous if previous else None),
+          review_prompt(project, frozen, project/previous if previous else None,
+                        appearance_regime=protocol.get("appearance_regime")),
           images=[project/str(p) for p in images], schema=review_schema(manifest),
           timeout=protocol["review_timeout_seconds"])
     report = read(call / "response.json")
@@ -309,7 +324,8 @@ def run_trial(root, spec, runtime, protocol):
         for checkpoint in range(start, protocol["modeling_passes"]):
             model_dir = project / "models" / f"M{checkpoint}"
             model_dir.mkdir(parents=True, exist_ok=seeded)
-            write(model_dir / "modeling_report_schema.json", MODEL_REPORT_SCHEMA)
+            if plan:
+                write(model_dir / "modeling_report_schema.json", MODEL_REPORT_SCHEMA)
             candidate = str((model_dir / "candidate.json").relative_to(project))
             receipt = str((model_dir / "build_receipt.json").relative_to(project))
             prompt = protocol["input_prompt"] if checkpoint == 0 else protocol["repair_prompt"]
@@ -387,6 +403,8 @@ def main():
             if any(getattr(args,k) and getattr(args,k)!=row[k] for k in ("model","condition","effort")):
                 continue
             spec={"scene":name,**row,"protocol_sha256":digest(args.root/"protocol.json")}
+            if protocol.get("appearance_regime"):
+                spec["appearance_regime"] = protocol["appearance_regime"]
             identifier=f"{name}__{row['condition']}__{row['model']}__{row['effort']}"
             existing = args.root/"runs"/identifier
             if existing.exists() and not ((existing/"resume.json").exists() and read(existing/"status.json")["stage"] == "queued"):
