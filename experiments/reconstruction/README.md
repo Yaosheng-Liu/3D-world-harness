@@ -66,6 +66,8 @@ v1因报告分组兼容、深度证据绑定及时间预算问题终止，产物
 
 本机可运行 `sync_records.py --remote spark145 --source EXP --destination LOCAL --interval 300`，持续镜像协议、进度、用量、指标和对象归属检查图。原始会话、认证及大型工程不进入同步清单；网络中断记入 `sync_status.json`，下一周期再次同步。两类巡检均使用文件锁防止重复启动。
 
+需要增加并行时，在运行根目录的`scheduler.json`设置`workers_per_model`及`before_gate_trials`。每个槽位独立运行一个指定条件，兼容已运行的两个队列进程；完整链门槛通过前只调度登记的验证试验，通过后自动补位。该配置属于运行调度，不改变协议、模型或返修轮数。并行更改与资源检查保存在`parallelism_history.json`。
+
 ## 方法边界与记录口径
 
 - 所有组均提供 `cameras.json`，包含48张训练图和6张验证图的位姿及内参，图像路径对应校正后的输入。私有测试相机与图像不进入任务包。

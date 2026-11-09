@@ -74,6 +74,43 @@ def start_worker(root, key, script, arguments):
     return {"worker": key, "action": "started", "pid": process.pid, "at": time.time()}
 
 
+def fill_worker_pool(root, runtime, protocol, state, settings, gate_pending, held):
+    """Assign one queued trial per slot, reserving it before assigning another."""
+    slots = [(model, model+"-coordinator" if slot == 0 else f"{model}-worker{slot+1}")
+             for model in protocol["models"] for slot in range(settings["workers_per_model"])]
+    reserved, free, actions = set(), [], []
+    for model, key in slots:
+        record = root/f"{key}.json"
+        if worker_alive(record, "run.py", root):
+            arguments = read(record)["args"]
+            filters = {name: arguments[arguments.index("--"+name)+1] for name in ("scene", "condition", "effort")}
+            reserved.add(f"{filters['scene']}__{filters['condition']}__{model}__{filters['effort']}")
+        else:
+            free.append((model, key))
+    active = {t["id"] for t in state["trials"] if t["stage"] not in TERMINAL | {"queued"}}
+    orphans = active-reserved
+    for identifier in orphans:
+        state["issues"].append({"kind":"orphaned_controller", "trial":identifier})
+    blocked_models = {t["model"] for t in state["trials"] if t["id"] in orphans}
+    reserved |= active
+    allowed = set(settings["before_gate_trials"]) if gate_pending else None
+    if not held:
+        for model, key in free:
+            if model in blocked_models:
+                continue
+            queued = next((t for t in state["trials"] if t["model"] == model and t["stage"] == "queued"
+                           and t["id"] not in reserved and (allowed is None or t["id"] in allowed)), None)
+            if queued is None:
+                continue
+            arguments = ["--runtime", str(runtime), "--model", model, "--scene", queued["scene"],
+                         "--condition", queued["condition"], "--effort", queued["effort"]]
+            actions.append(start_worker(root, key, "run.py", arguments))
+            reserved.add(queued["id"])
+    state["parallelism"] = {"target_trials":len(slots), "assigned_trials":sorted(reserved),
+                            "gate_pending":gate_pending}
+    return actions
+
+
 def tick(root, runtime):
     state = snapshot(root)
     protocol = read(root / "protocol.json")
@@ -105,7 +142,10 @@ def tick(root, runtime):
     # A crashed controller may leave a live model call. Keep that trial intact for
     # diagnosis rather than skipping it or silently starting a replacement.
     if not state["automated_finished"]:
-        for model in protocol["models"]:
+        scheduler = root/"scheduler.json"
+        if scheduler.exists():
+            actions += fill_worker_pool(root, runtime, protocol, state, read(scheduler), bool(gated_trial), hold.exists())
+        for model in ([] if scheduler.exists() else protocol["models"]):
             key = model + "-coordinator"
             if hold.exists() or (gated_trial and gated_trial["model"] != model):
                 continue
@@ -147,7 +187,10 @@ def tick(root, runtime):
     if state["launch_hold"]:
         lines += ["", "后续启动已停止，待处理：" + str(state["launch_hold"])]
     elif gated_trial:
-        lines += ["", "先验证一次完整建模—审核—返修及评测，再放行其余队列：" + gated_trial["id"]]
+        lines += ["", "完整验证通过前仅运行登记的验证组，随后放行其余队列：" + gated_trial["id"]]
+    if state.get("parallelism"):
+        pool = state["parallelism"]
+        lines += ["", f"并行上限 {pool['target_trials']} 组，已分配 {len(pool['assigned_trials'])} 组；每个槽位独立运行一个实验。"]
     (root / "MONITOR.md").write_text("\n".join(lines) + "\n")
     if state["automated_finished"]:
         write(root / "automatic_completion.json", {k: v for k, v in state.items() if k != "trials"})

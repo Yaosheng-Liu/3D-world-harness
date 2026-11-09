@@ -14,6 +14,37 @@ SPEC.loader.exec_module(monitor)
 
 
 class ExperimentMonitorTests(unittest.TestCase):
+    def test_pool_reserves_distinct_trials_and_respects_pre_gate_admission(self):
+        state={"trials":[{"id":"s__single_basic__test__ultra", "scene":"s", "model":"test",
+                           "condition":"single_basic", "effort":"ultra", "stage":"queued"},
+                          {"id":"s__harness_tools__test__high", "scene":"s", "model":"test",
+                           "condition":"harness_tools", "effort":"high", "stage":"queued"}], "issues":[]}
+        settings={"workers_per_model":2,"before_gate_trials":[state["trials"][0]["id"]]}
+        with patch.object(monitor,"worker_alive",return_value=False), \
+             patch.object(monitor,"start_worker",return_value={}) as start:
+            monitor.fill_worker_pool(self.root,self.root/"runtime.json",self.protocol,state,settings,True,False)
+        self.assertEqual(start.call_count,1)
+        state["parallelism"]={}
+        with patch.object(monitor,"worker_alive",return_value=False), \
+             patch.object(monitor,"start_worker",return_value={}) as start:
+            monitor.fill_worker_pool(self.root,self.root/"runtime.json",self.protocol,state,settings,False,False)
+        self.assertEqual(start.call_count,2)
+        self.assertEqual(len(set(tuple(c.args[3]) for c in start.call_args_list)),2)
+
+    def test_pool_adopts_existing_worker_and_does_not_duplicate_its_queued_trial(self):
+        identifier="s__single_basic__test__ultra"
+        args=["python","run.py","--root",str(self.root),"--model","test","--scene","s",
+              "--condition","single_basic","--effort","ultra"]
+        monitor.write(self.root/"test-coordinator.json",{"pid":1,"args":args})
+        state={"trials":[{"id":identifier,"scene":"s","model":"test","condition":"single_basic",
+                           "effort":"ultra","stage":"queued"}],"issues":[]}
+        settings={"workers_per_model":2,"before_gate_trials":[identifier]}
+        with patch.object(monitor,"worker_alive",side_effect=lambda p,*_:p.name=="test-coordinator.json"), \
+             patch.object(monitor,"start_worker") as start:
+            monitor.fill_worker_pool(self.root,self.root/"runtime.json",self.protocol,state,settings,True,False)
+        start.assert_not_called()
+        self.assertEqual(state["parallelism"]["assigned_trials"],[identifier])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

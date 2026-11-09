@@ -19,6 +19,7 @@ root=pathlib.Path({str(source)!r}).resolve()
 patterns=('protocol.json','registered_protocol.json','inputs.json','initialization_summary.json',
           'preparation_deviations.json','workflow_incident.json','execution_gate.json','launch_hold.json',
           'continuation_manifest.json','excluded_feedback_attempts.json',
+          'scheduler.json','parallelism_history.json',
           'STATUS.md','progress.json','MONITOR.md','monitor.json',
           'monitor_actions.jsonl','automatic_completion.json','results.csv','results.json',
           'evaluation_errors.json','runs/*/spec.json','runs/*/status.json',
