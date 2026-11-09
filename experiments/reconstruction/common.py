@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import time
 
@@ -106,6 +107,33 @@ def bind_candidate_sources(project, candidate):
             sources.append({"path": name, "description": "Fixed experiment input lineage, bound by controller"})
     write(project / candidate, scene)
     return scene
+
+
+def checkpoint_calls(trial, number):
+    records = []
+    if (trial / "planner_usage.json").exists():
+        records.append({"phase_role": "planner", **read(trial / "planner_usage.json")})
+    for directory in ("source_calls", "calls"):
+        for path in sorted((trial / directory).glob("*/usage.json")):
+            match = re.fullmatch(r"(model_M|review_R)(\d+)(?:_attempt\d+)?", path.parent.name)
+            if match and int(match[2]) <= number:
+                records.append({"phase_role": "modeler" if match[1] == "model_M" else "reviewer", **read(path)})
+    return records
+
+
+def usage_summary(records):
+    """Latest cumulative counter per model thread, plus independent role calls."""
+    counters, latest = [], {}
+    for index, record in enumerate(records):
+        if record["phase_role"] == "modeler":
+            key = record.get("thread_id") or f"untracked_{index}"
+            if key not in latest or record.get("started_at", 0) >= latest[key].get("started_at", 0):
+                latest[key] = record
+        else:
+            counters.append(record["usage"])
+    counters += [r.get("raw_cumulative_usage", r["usage"]) for r in latest.values()]
+    return {key: sum(c[key] for c in counters) if counters and all(c.get(key) is not None for c in counters) else None
+            for key in ("input_tokens", "output_tokens", "cached_input_tokens", "reasoning_output_tokens", "total_tokens")}
 
 
 def matrix(protocol):

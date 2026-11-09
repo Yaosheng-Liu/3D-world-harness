@@ -31,6 +31,11 @@ def report(root):
             trial=root/'runs'/identifier
             state=read(trial/'status.json') if (trial/'status.json').exists() else {'stage':'queued','checkpoints':[]}
             usage={role:live_usage(trial/'homes'/role) for role in ('planner','modeler','reviewer')}
+            prefix=trial/'initial_modeler_usage.json'
+            if prefix.exists():
+                initial=read(prefix)
+                for key,value in usage['modeler'].items():
+                    usage['modeler'][key]=(initial.get(key)+value if initial.get(key) is not None else None) if value is not None else initial.get(key)
             rows.append({'id':identifier,'scene':scene,**spec,'stage':state['stage'],
                          'checkpoint':state.get('checkpoint'),'frozen_checkpoints':len(state['checkpoints']),
                          'error':state.get('error'),'live_role_usage':usage})

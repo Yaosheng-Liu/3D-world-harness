@@ -12,6 +12,17 @@ SPEC.loader.exec_module(common)
 
 
 class ExperimentUsageTests(unittest.TestCase):
+    def test_continuation_counts_thread_prefix_once_and_includes_new_context(self):
+        def call(thread, started, value):
+            return {"phase_role":"modeler", "thread_id":thread, "started_at":started,
+                    "raw_cumulative_usage":{"total_tokens":value}, "usage":{"total_tokens":value}}
+        rows = [call("original",1,100), call("original",2,130), call("original",3,190),
+                call("clean",4,20), call("clean",5,50),
+                {"phase_role":"reviewer", "usage":{"total_tokens":7}}]
+        self.assertEqual(common.usage_summary(rows)["total_tokens"], 247)
+        rows[-1]["usage"]["total_tokens"] = None
+        self.assertIsNone(common.usage_summary(rows)["total_tokens"])
+
     def test_controller_binds_lineage_without_changing_scene_content(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

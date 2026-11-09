@@ -18,9 +18,11 @@ def sync(remote, source, destination):
 root=pathlib.Path({str(source)!r}).resolve()
 patterns=('protocol.json','registered_protocol.json','inputs.json','initialization_summary.json',
           'preparation_deviations.json','workflow_incident.json','execution_gate.json','launch_hold.json',
+          'continuation_manifest.json','excluded_feedback_attempts.json',
           'STATUS.md','progress.json','MONITOR.md','monitor.json',
           'monitor_actions.jsonl','automatic_completion.json','results.csv','results.json',
           'evaluation_errors.json','runs/*/spec.json','runs/*/status.json',
+          'runs/*/resume.json','runs/*/initial_modeler_usage.json','runs/*/source_calls/*/usage.json',
           'runs/*/planner_usage.json','runs/*/calls/*/usage.json',
           'runs/*/checkpoints/*/frozen.json','evaluation_results/*/*/*metrics.json',
           'evaluation_results/*/*/complete.json','evaluation_results/*/*/error.json',

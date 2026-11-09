@@ -9,7 +9,7 @@ import time
 
 from PIL import Image
 
-from common import REPO, command, digest, docker, read, write
+from common import REPO, checkpoint_calls, command, digest, docker, read, usage_summary, write
 
 
 def references(root, scene, protocol):
@@ -97,23 +97,14 @@ def collect(root):
             if not metric.exists():
                 continue
             result=read(metric)
-            records=[]
-            if (trial/'planner_usage.json').exists():
-                records.append(read(trial/'planner_usage.json'))
-            for i in range(number+1):
-                path=trial/f'calls/model_M{i}/usage.json'
-                if path.exists():records.append(read(path))
-                if i>0:
-                    path=trial/f'calls/review_R{i}/usage.json'
-                    if path.exists():records.append(read(path))
-            totals={key:sum(r['usage'][key] for r in records)
-                    if all(r['usage'].get(key) is not None for r in records) else None
-                    for key in ('input_tokens','output_tokens','cached_input_tokens','reasoning_output_tokens','total_tokens')}
+            records=checkpoint_calls(trial,number)
+            totals=usage_summary(records)
             row={**spec,'trial':trial.name,'checkpoint':f'M{number}',**result['image']['mean'],
                  'edit_mechanical_success_rate':result['edit_mechanical_success_rate'],
                  'edit_unintended_change_rate':result['edit_unintended_change_rate'],
                  'objects':result['objects'],'triangles':result['triangles'],**totals,
                  'agent_seconds':sum(r['seconds'] for r in records),
+                 'initial_origin':spec.get('initial_origin','fresh'),
                  'edit_semantic_verification':result['edit_semantic_verification']}
             geometry=result['geometry']
             row.update(geometry['macro_average_metrics'])

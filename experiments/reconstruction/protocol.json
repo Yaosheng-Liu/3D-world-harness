@@ -1,5 +1,5 @@
 {
-  "id": "worldharness_20261109_v2",
+  "id": "worldharness_20261109_v1_continue",
   "seed": 20261109,
   "scenes": {
     "bedroom": "05c8b23b4c3a186d81efad50fd82be9841b694b5edd818f6f23619a494936746",
@@ -8,6 +8,7 @@
   },
   "models": ["gpt-6-astra", "gpt-6.1-sol"],
   "conditions": ["single_basic", "single_tools", "harness_tools"],
+  "single_agent_feedback": "Original observations, previous saved scene and a short revision instruction only. No harness-generated reference/render comparison panels, overlays, RGB-error maps or external reviewer. Existing M0 may be reused; repair conversations previously exposed to audit feedback are excluded and replaced by clean repair contexts.",
   "main_effort": "ultra",
   "ablation_effort": "high",
   "planner": {"model": "gpt-6-astra", "effort": "high"},

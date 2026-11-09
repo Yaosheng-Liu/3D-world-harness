@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from copy import deepcopy
 import os
 from pathlib import Path
 import shutil
@@ -20,8 +19,7 @@ from reconstruction_review import freeze_candidate, review_schema, validate_revi
 from review_reconstruction import review_prompt
 from run_reconstruction import run_planner
 from world_build import build_world
-from world_evaluation import write_view_inspection
-from world_model import source_paths, validate_scene
+from world_model import scene_hash, source_paths, validate_scene
 
 
 def environment(runtime, home):
@@ -147,6 +145,12 @@ Scene JSON format: follow world/scene.json and {REPO}/backend/world_model.py. Sa
 Common editing tasks are listed in edit_task_targets.json. Next to each candidate write edit_targets.json mapping each listed key to the corresponding scene object ID, or null if the target is missing or unresolved. This declaration will be independently inspected; naming an object is not evidence of correct ownership.
 Specialist tools are enabled only for tool conditions: use tools.py segment --plan <plan.json> --output <new-dir>; geometry --plan <plan.json> --segments <segments.json> --output <new-dir>; depth --receipt <build_receipt.json>; triangulate --receipt <receipt> --landmarks <landmarks.json>. A self-authored plan must follow plan_schema.json. Do not run specialist tools in single_basic. Tools do not certify reconstruction correctness.
 """)
+    if spec["condition"] != "harness_tools":
+        with (project / "AGENTS.md").open("a") as packet:
+            packet.write("Single-agent condition: use the original inputs and previous scene to revise independently. "
+                         "No external review feedback or harness-generated reference/render panels, overlays or RGB-error maps "
+                         "are supplied. Do not invoke the harness review/inspection generators. Ordinary Blender modeling "
+                         "and standalone model previews remain available.\n")
     validate_scene(scene, project)
     protected = [p for p in (project / "observations").rglob("*") if p.is_file()]
     if spec["condition"] != "single_basic":
@@ -209,25 +213,91 @@ def freeze_checkpoint(project, directory, candidate, receipt):
     return scene, build
 
 
+def next_attempt(parent, name):
+    path, number = parent / name, 1
+    while path.exists():
+        number += 1
+        path = parent / f"{name}_attempt{number}"
+    return path
+
+
+def feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, plan, previous):
+    """Only the full harness gets generated review evidence and a reviewer."""
+    if not plan:
+        return None
+    number = checkpoint + 1
+    completed = sorted((project / "reviews").glob(f"R{number}*/review.json"), key=lambda p: p.stat().st_mtime)
+    if completed:
+        path = completed[-1]
+        manifest = read(path.parent / "candidate.json")
+        verify_files(project, manifest["files"])
+        validate_review(manifest, read(path), read(project / previous) if previous else None)
+        return str(path.relative_to(project))
+    # Old M0 geometry stays frozen. Add omitted input lineage to a separate
+    # review build rather than editing the saved modeling candidate.
+    original = read(project / candidate)
+    bound_path = Path("review_bindings") / f"M{checkpoint}" / "candidate.json"
+    write(project / bound_path, original)
+    bound = bind_candidate_sources(project, bound_path)
+    if scene_hash(bound) != scene_hash(original):
+        build = build_world(project, scene=bound, render=True, timeout=900)
+        candidate, receipt = str(bound_path), str(bound_path.parent / "build_receipt.json")
+        write(project / receipt, build)
+        write(project / bound_path.parent / "migration.json", {
+            "original_scene_hash": scene_hash(original), "review_scene_hash": scene_hash(bound),
+            "geometry_and_views_unchanged": original["objects"] == bound["objects"] and original["views"] == bound["views"]})
+    frozen = next_attempt(project / "reviews", f"R{number}")
+    manifest = freeze_candidate(project, candidate, receipt, frozen, blender=runtime["blender"],
+        previous_review=project/previous if previous else None, plan_path=plan,
+        segments_path="evidence/segments/segments.json", geometry_path="evidence/geometry/geometry.json",
+        modeling_report_path=f"models/M{checkpoint}/modeling_report.json")
+    inspection, edit = read(frozen/"inspection.json"), read(frozen/"editability.json")
+    images = (inspection["inspection_paths"] + inspection.get("overlay_paths", []) +
+              inspection["depth"].get("inspection_paths", []) + manifest.get("source_inspection_paths", []) +
+              edit.get("inspection_paths", []))
+    call = next_attempt(run / "calls", f"review_R{number}")
+    agent(project, call, runtime, protocol["reviewer"], role_home(run, "reviewer", runtime),
+          review_prompt(project, frozen, project/previous if previous else None),
+          images=[project/str(p) for p in images], schema=review_schema(manifest),
+          timeout=protocol["review_timeout_seconds"])
+    report = read(call / "response.json")
+    verify_files(project, manifest["files"])
+    validate_review(manifest, report, read(project/previous) if previous else None)
+    write(frozen/"review.json", report)
+    return str((frozen/"review.json").relative_to(project))
+
+
 def run_trial(root, spec, runtime, protocol):
     identifier = f"{spec['scene']}__{spec['condition']}__{spec['model']}__{spec['effort']}"
     run = root / "runs" / identifier
-    run.mkdir(parents=True, exist_ok=False)
-    write(run / "spec.json", spec)
-    state = {"id":identifier,"spec":spec,"stage":"preparing","started_at":time.time(),"checkpoints":[]}
+    seeded = (run / "resume.json").exists()
+    if seeded:
+        seed = read(run / "resume.json")
+        state = read(run / "status.json")
+    else:
+        run.mkdir(parents=True, exist_ok=False)
+        write(run / "spec.json", spec)
+        state = {"id":identifier,"spec":spec,"stage":"preparing","started_at":time.time(),"checkpoints":[]}
     def update(stage, **fields):
         state.update(stage=stage,updated_at=time.time(),**fields)
         write(run / "status.json", state)
     try:
-        project = initialize_run(root, run, spec, runtime)
-        plan = None
-        if spec["condition"] == "harness_tools":
+        project = run / "project" if seeded else initialize_run(root, run, spec, runtime)
+        plan = seed.get("plan") if seeded else None
+        if spec["condition"] == "harness_tools" and not plan:
             update("planning")
             plan = planning(project, run, runtime, protocol)
-        thread, previous, previous_usage = None, None, None
-        for checkpoint in range(protocol["modeling_passes"]):
+        thread = seed.get("thread_id") if seeded else None
+        previous_usage = seed.get("raw_cumulative_usage") if seeded else None
+        previous, start = None, len(state["checkpoints"])
+        for number in range(start):
+            verify_files(run/f"checkpoints/M{number}", read(run/f"checkpoints/M{number}/frozen.json")["files"])
+            update("preparing_feedback", checkpoint=number)
+            previous = feedback(project, run, runtime, protocol, number,
+                                state["checkpoints"][number]["candidate"], state["checkpoints"][number]["receipt"], plan, previous)
+        for checkpoint in range(start, protocol["modeling_passes"]):
             model_dir = project / "models" / f"M{checkpoint}"
-            model_dir.mkdir(parents=True)
+            model_dir.mkdir(parents=True, exist_ok=seeded)
             write(model_dir / "modeling_report_schema.json", MODEL_REPORT_SCHEMA)
             candidate = str((model_dir / "candidate.json").relative_to(project))
             receipt = str((model_dir / "build_receipt.json").relative_to(project))
@@ -247,9 +317,11 @@ def run_trial(root, spec, runtime, protocol):
             elif previous:
                 prompt += f"\n自检材料：{previous}。打开其中原图、纯渲染和叠图，对照后自行修订。"
             if checkpoint:
-                prompt += f"\n前一候选 models/M{checkpoint-1}/candidate.json；依据原图自检或审核反馈修订。"
+                prompt += f"\n前一候选 models/M{checkpoint-1}/candidate.json；依据原始输入自行修订" + ("，并处理独立审核意见。" if plan else "。")
+            if seeded and checkpoint == start and plan:
+                prompt += "\n这是中断任务的续接，保留本轮已保存的修改并完成提交，不从头重建场景。"
             update("modeling",checkpoint=checkpoint)
-            usage = agent(project,run/f"calls/model_M{checkpoint}",runtime,
+            usage = agent(project,next_attempt(run/"calls", f"model_M{checkpoint}"),runtime,
                           {"model":spec["model"],"effort":spec["effort"]},role_home(run,"modeler",runtime),
                           prompt,images=[project/"training_contact_sheet.jpg"],thread=thread,
                           previous_usage=previous_usage,
@@ -269,29 +341,7 @@ def run_trial(root, spec, runtime, protocol):
                 continue
             if plan:
                 update("reviewing",checkpoint=checkpoint)
-                frozen = project / f"reviews/R{checkpoint+1}"
-                manifest = freeze_candidate(project,candidate,receipt,frozen,blender=runtime["blender"],
-                    previous_review=project/previous if previous else None,plan_path=plan,
-                    segments_path="evidence/segments/segments.json",geometry_path="evidence/geometry/geometry.json",
-                    modeling_report_path=str((model_dir/"modeling_report.json").relative_to(project)))
-                inspection, edit = read(frozen/"inspection.json"), read(frozen/"editability.json")
-                images = (inspection["inspection_paths"] + inspection.get("overlay_paths",[]) +
-                          inspection["depth"].get("inspection_paths",[]) + manifest.get("source_inspection_paths",[]) +
-                          edit.get("inspection_paths",[]))
-                images = [project/str(x) for x in images]
-                result = agent(project,run/f"calls/review_R{checkpoint+1}",runtime,protocol["reviewer"],
-                    role_home(run,"reviewer",runtime),review_prompt(project,frozen,project/previous if previous else None),
-                    images=images,schema=review_schema(manifest),timeout=protocol["review_timeout_seconds"])
-                report = read(run/f"calls/review_R{checkpoint+1}/response.json")
-                verify_files(project,manifest["files"])
-                validate_review(manifest,report,read(project/previous) if previous else None)
-                write(frozen/"review.json",report)
-                previous = str((frozen/"review.json").relative_to(project))
-            else:
-                inspection = write_view_inspection(project,scene,build)
-                # Self-inspection is part of the following model turn, not a new reviewer.
-                previous = str((model_dir/"self_inspection.json").relative_to(project))
-                write(project/previous,inspection)
+            previous = feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, plan, previous)
         update("modeled",seconds=time.time()-state["started_at"],final_review="not_run_by_protocol")
     except Exception as error:
         update("failed",error=str(error),seconds=time.time()-state["started_at"])
@@ -318,7 +368,8 @@ def main():
                 continue
             spec={"scene":name,**row,"protocol_sha256":digest(args.root/"protocol.json")}
             identifier=f"{name}__{row['condition']}__{row['model']}__{row['effort']}"
-            if (args.root/"runs"/identifier).exists():
+            existing = args.root/"runs"/identifier
+            if existing.exists() and not ((existing/"resume.json").exists() and read(existing/"status.json")["stage"] == "queued"):
                 continue
             try:
                 run_trial(args.root,spec,runtime,protocol)
