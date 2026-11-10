@@ -4,6 +4,8 @@
 
 ## 1. 数据校验
 
+以下命令针对完整十场景离线包。只负责第6–10场景的协助者，先按[官方下载与处理交接](dl3dv-download.md)生成五场景数据根目录并完成子集验收，再从第2节继续；`verify_dataset.py`固定要求全部十场景，不能用于五场景子集。
+
 ```bash
 sha256sum -c worldharness-dl3dv10-v3.zip.sha256
 unzip worldharness-dl3dv10-v3.zip -d /your/data

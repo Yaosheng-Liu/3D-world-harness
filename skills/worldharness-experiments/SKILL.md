@@ -17,7 +17,8 @@ description: 安装并复现 WorldHarness 的 DL3DV 十场景重建主实验，�
 
 1. 新机器：读 [安装与设备适配](references/setup.md)，从 GitHub 获取仓库、安装工具和权重。
 2. 首次开展实验：读 [实验协议与输入边界](references/protocol.md)。精确参数在 [protocol.json](assets/protocol.json)，完整 ID 在 [scenes.json](assets/scenes.json)。
-3. 执行、巡检、回传：读 [运行与交接](references/run.md)。
+3. 协助者负责第 6–10 场景的在线下载与处理：读 [五场景官方下载与处理交接](references/dl3dv-download.md)。包含逐场景 Hugging Face 链接、相机适配方法、目录格式和验收要求；这项分工本身不启动建模。
+4. 执行、巡检、回传：读 [运行与交接](references/run.md)。
 
 ## 不改变的实验条件
 
@@ -31,7 +32,7 @@ description: 安装并复现 WorldHarness 的 DL3DV 十场景重建主实验，�
 
 ## 最小执行顺序
 
-1. 校验数据包 SHA256，解压到独立数据目录，运行 `scripts/verify_dataset.py`。
+1. 离线完整十场景包：校验 SHA256、解压并运行 `scripts/verify_dataset.py`。在线五场景分工：按 [下载与处理交接](references/dl3dv-download.md) 完成子集验收；无需下载其余五个场景。
 2. 用 `scripts/configure.py` 创建本人的全新实验根目录与 `runtime.json`；它不会调用模型。
 3. 运行 `scripts/preflight.py` 检查 Linux/systemd、Codex CLI、Blender、OIDN、Docker/CUDA、DA3/SAM3 和评测依赖；按安装文档做工具推理冒烟检查及模型访问探针。
 4. 用仓库 `prepare.py` 先建立输入划分，再执行训练图 DA3/TSDF 初始化。检查生成记录，再启动 `monitor.py`。它同时调度建模和冻结评测。

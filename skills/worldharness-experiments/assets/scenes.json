@@ -60,7 +60,9 @@
       "frame_count": 340,
       "camera_sha256": "88af8ecd0f2b9f016887495f569f8d84514e614bfccb6f54e3ae8102c30f8475",
       "source_archive_sha256": "c778278372ce215afc200f10ca74f9eb0d3279b724d63876f4054fe54a2513c7",
-      "focus": "两张床、床头柜、扶手椅与灯具分离"
+      "focus": "两张床、床头柜、扶手椅与灯具分离",
+      "hf_path": "2K/3faa84ca98aa8d3794ea15d9b9ed61da35ae1755622af7857715a27ca61c7dea.zip",
+      "hf_url": "https://huggingface.co/datasets/DL3DV/DL3DV-ALL-960P/blob/main/2K/3faa84ca98aa8d3794ea15d9b9ed61da35ae1755622af7857715a27ca61c7dea.zip"
     },
     {
       "number": 7,
@@ -70,7 +72,9 @@
       "frame_count": 385,
       "camera_sha256": "8df249677c87f3c8a8b6f8c4c402aee1e4091dca1f97c0200eb09603b18d1344",
       "source_archive_sha256": "56de3526ddadb8c6366eac80542026e23fcdc52f85449d393783c16db8644cb4",
-      "focus": "办公桌、显示器、转椅的独立归属"
+      "focus": "办公桌、显示器、转椅的独立归属",
+      "hf_path": "1K/3fae5e0bb1354fe30a0a23934ab00c7a51004027cc79ae1205f910b7bdefd33f.zip",
+      "hf_url": "https://huggingface.co/datasets/DL3DV/DL3DV-ALL-960P/blob/main/1K/3fae5e0bb1354fe30a0a23934ab00c7a51004027cc79ae1205f910b7bdefd33f.zip"
     },
     {
       "number": 8,
@@ -80,7 +84,9 @@
       "frame_count": 408,
       "camera_sha256": "7c111b4ccbe40878ce95d76773edf941c441c9b32fceeebe9d03f48ecd837f55",
       "source_archive_sha256": "4453c080997d82e349dd84dd29f497cac556db4597bb23324bdf1fa20196ecf9",
-      "focus": "跑步机、椭圆机、哑铃架与训练凳；复杂曲面、细杆及器械间遮挡"
+      "focus": "跑步机、椭圆机、哑铃架与训练凳；复杂曲面、细杆及器械间遮挡",
+      "hf_path": "1K/91d19c97d51ee43fbd3372025dfa1bb9230fc41f344585b1ff9d191e138c3510.zip",
+      "hf_url": "https://huggingface.co/datasets/DL3DV/DL3DV-ALL-960P/blob/main/1K/91d19c97d51ee43fbd3372025dfa1bb9230fc41f344585b1ff9d191e138c3510.zip"
     },
     {
       "number": 9,
@@ -90,7 +96,9 @@
       "frame_count": 330,
       "camera_sha256": "0fb341af22bfe16b3e6327cabf6265a7ba219b401218c2ae9ee089bb5b273b4c",
       "source_archive_sha256": "a2128b15aadee5dd0792347601ca22cc4a56265e1b2e2a1901fab7e3ab1023bd",
-      "focus": "沙发、茶几、岛台、柜体与电器分离"
+      "focus": "沙发、茶几、岛台、柜体与电器分离",
+      "hf_path": "1K/1e1a3e3bbab066fc0374dc6c40f4778d2c85221330fea126fdcb906980b2bb11.zip",
+      "hf_url": "https://huggingface.co/datasets/DL3DV/DL3DV-ALL-960P/blob/main/1K/1e1a3e3bbab066fc0374dc6c40f4778d2c85221330fea126fdcb906980b2bb11.zip"
     },
     {
       "number": 10,
@@ -100,7 +108,10 @@
       "frame_count": 416,
       "camera_sha256": "a1b2e25c6e99d11ac451abf074170e499c93c245672e5585748125311abe24e2",
       "source_archive_sha256": "fa38be644532b5e541bd49932f44dcb176a1fa6872ff7e348e5707ce99a94821",
-      "focus": "座位区、长桌、卡座、吧台与展示柜；多区域布局和前后遮挡"
+      "focus": "座位区、长桌、卡座、吧台与展示柜；多区域布局和前后遮挡",
+      "hf_path": "2K/76a1bad134ddd1ebf98fc62fc1040f0febed3f4d08f54fd7aee502405a07ff53.zip",
+      "hf_url": "https://huggingface.co/datasets/DL3DV/DL3DV-ALL-960P/blob/main/2K/76a1bad134ddd1ebf98fc62fc1040f0febed3f4d08f54fd7aee502405a07ff53.zip"
     }
-  ]
+  ],
+  "official_download_repository": "DL3DV/DL3DV-ALL-960P"
 }
