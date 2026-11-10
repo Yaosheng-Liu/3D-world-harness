@@ -14,6 +14,23 @@ SPEC.loader.exec_module(monitor)
 
 
 class ExperimentMonitorTests(unittest.TestCase):
+    def test_requested_recovery_can_use_a_free_slot_without_exceeding_total_pool(self):
+        live = "live__harness_tools__test__ultra"
+        args = ["python", "run.py", "--root", str(self.root), "--model", "test", "--scene", "live",
+                "--condition", "harness_tools", "--effort", "ultra"]
+        monitor.write(self.root/"test-coordinator.json", {"pid": 1, "args": args})
+        state = {"trials": [
+            {"id": live, "scene": "live", "model": "test", "condition": "harness_tools", "effort": "ultra", "stage": "planning"},
+            {"id": "resume__harness_tools__test__ultra", "scene": "resume", "model": "test",
+             "condition": "harness_tools", "effort": "ultra", "stage": "queued"}], "issues": []}
+        settings = {"workers_per_model": 2, "before_gate_trials": [], "condition_limits": {"harness_tools": 1},
+                    "priority_trials": [state["trials"][1]["id"]]}
+        with patch.object(monitor, "worker_alive", side_effect=lambda p,*_: p.name == "test-coordinator.json"), \
+             patch.object(monitor, "start_worker", return_value={}) as start:
+            monitor.fill_worker_pool(self.root, self.root/"runtime.json", self.protocol, state, settings, False, False)
+        self.assertEqual(start.call_count, 1)
+        self.assertEqual(len(state["parallelism"]["assigned_trials"]), 2)
+
     def test_planner_timeout_resumes_original_thread_once_and_preserves_failure(self):
         trial = self.trial("harness_tools", "high", "failed")
         state = monitor.read(trial/"status.json")

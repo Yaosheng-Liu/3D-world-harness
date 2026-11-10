@@ -106,9 +106,9 @@ def fill_worker_pool(root, runtime, protocol, state, settings, gate_pending, hel
                 continue
             queued = next((t for t in candidates if t["model"] == model and t["stage"] == "queued"
                            and (allowed_conditions is None or t["condition"] in allowed_conditions)
-                           and sum(q["model"] == model and q["condition"] == t["condition"]
+                           and (t["id"] in priority or sum(q["model"] == model and q["condition"] == t["condition"]
                                    and q["id"] in reserved for q in state["trials"])
-                               < settings.get("condition_limits", {}).get(t["condition"], len(slots))
+                               < settings.get("condition_limits", {}).get(t["condition"], len(slots)))
                            and t["id"] not in reserved and (allowed is None or t["id"] in allowed)), None)
             if queued is None:
                 continue
