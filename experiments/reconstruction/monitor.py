@@ -94,11 +94,16 @@ def fill_worker_pool(root, runtime, protocol, state, settings, gate_pending, hel
     blocked_models = {t["model"] for t in state["trials"] if t["id"] in orphans}
     reserved |= active
     allowed = set(settings["before_gate_trials"]) if gate_pending else None
-    if not held:
+    allowed_conditions = settings.get("allowed_conditions")
+    disk_ready = shutil.disk_usage(root).free >= settings.get("min_free_disk_bytes", 0)
+    if not disk_ready:
+        state["issues"].append({"kind": "disk_capacity", "minimum_free_bytes": settings["min_free_disk_bytes"]})
+    if not held and disk_ready:
         for model, key in free:
             if model in blocked_models:
                 continue
             queued = next((t for t in state["trials"] if t["model"] == model and t["stage"] == "queued"
+                           and (allowed_conditions is None or t["condition"] in allowed_conditions)
                            and t["id"] not in reserved and (allowed is None or t["id"] in allowed)), None)
             if queued is None:
                 continue

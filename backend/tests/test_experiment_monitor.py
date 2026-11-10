@@ -14,6 +14,36 @@ SPEC.loader.exec_module(monitor)
 
 
 class ExperimentMonitorTests(unittest.TestCase):
+    def test_condition_gate_admits_rgb_only_trials_before_tool_initialization(self):
+        state = {"trials": [
+            {"id": f"s__{condition}__test__ultra", "scene": "s", "model": "test",
+             "condition": condition, "effort": "ultra", "stage": "queued"}
+            for condition in ("harness_tools", "single_basic", "single_tools")], "issues": []}
+        settings = {"workers_per_model": 4, "before_gate_trials": [], "allowed_conditions": ["single_basic"]}
+        with patch.object(monitor, "worker_alive", return_value=False), \
+             patch.object(monitor, "start_worker", return_value={}) as start:
+            monitor.fill_worker_pool(self.root, self.root/"runtime.json", self.protocol, state, settings, False, False)
+        self.assertEqual(start.call_count, 1)
+        self.assertIn("single_basic", start.call_args.args[3])
+
+    def test_low_disk_blocks_new_trials_without_changing_active_trial(self):
+        identifier = "s__single_basic__test__ultra"
+        args = ["python", "run.py", "--root", str(self.root), "--model", "test", "--scene", "s",
+                "--condition", "single_basic", "--effort", "ultra"]
+        monitor.write(self.root/"test-coordinator.json", {"pid": 1, "args": args})
+        state = {"trials": [
+            {"id": identifier, "scene": "s", "model": "test", "condition": "single_basic",
+             "effort": "ultra", "stage": "modeling"},
+            {"id": "t__single_basic__test__ultra", "scene": "t", "model": "test",
+             "condition": "single_basic", "effort": "ultra", "stage": "queued"}], "issues": []}
+        settings = {"workers_per_model": 2, "before_gate_trials": [], "min_free_disk_bytes": 10**30}
+        with patch.object(monitor, "worker_alive", side_effect=lambda p,*_: p.name == "test-coordinator.json"), \
+             patch.object(monitor, "start_worker") as start:
+            monitor.fill_worker_pool(self.root, self.root/"runtime.json", self.protocol, state, settings, False, False)
+        start.assert_not_called()
+        self.assertIn(identifier, state["parallelism"]["assigned_trials"])
+        self.assertIn("disk_capacity", {row["kind"] for row in state["issues"]})
+
     def test_old_review_timeout_is_requeued_once_but_other_failures_are_preserved(self):
         self.protocol["review_timeout_seconds"] = None
         trial=self.trial("harness_tools","high","failed")

@@ -26,6 +26,7 @@ def main():
         p.error('Experiment root must be new; existing trials are not overwritten')
     assets = Path(__file__).parents[1]/'assets'
     protocol = json.loads((assets/'protocol.json').read_text())
+    effort = protocol['model_efforts'][a.model]
     available = {r['key']:r for r in json.loads((dataset/'manifest.json').read_text())['scenes']}
     keys = a.scenes.split(',')
     if len(set(keys)) != len(keys) or any(k not in protocol['scenes'] for k in keys):
@@ -36,9 +37,9 @@ def main():
     for path in [a.codex,a.blender,a.oidn,a.auth_home/'auth.json',repo/'experiments/reconstruction/run.py']:
         if not path.is_file():
             p.error('Required file does not exist: '+str(path))
-    protocol.update(id=root.name,models=[a.model],scenes={k:protocol['scenes'][k] for k in keys},
+    protocol.update(id=root.name,models=[a.model],main_effort=effort,scenes={k:protocol['scenes'][k] for k in keys},
                     edit_targets={k:protocol['edit_targets'][k] for k in keys},
-                    planner={'model':a.model,'effort':'xhigh'},reviewer={'model':a.model,'effort':'xhigh'},
+                    planner={'model':a.model,'effort':effort},reviewer={'model':a.model,'effort':effort},
                     code_revision=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip())
     protocol['suite_protocol_sha256'] = hashlib.sha256((assets/'protocol.json').read_bytes()).hexdigest()
     runtime = dict(codex=str(a.codex.resolve()),auth_home=str(a.auth_home.resolve()),
@@ -49,16 +50,17 @@ def main():
                    sparse_evaluator=str(repo/'experiments/reconstruction/evaluate_sparse.py'),
                    geometry_image=a.geometry_image,segmentation_image=a.segmentation_image,
                    evaluation_packages=str(tools/'evaluation-packages'),torch_cache=str(tools/'torch-cache'),
-                   docker_gpus=a.docker_gpus,proxy=a.proxy,tool_timeout_seconds=None)
+                   docker_gpus=a.docker_gpus,gpu_lock=str(tools/'locks/gpu.lock'),
+                   proxy=a.proxy,tool_timeout_seconds=None)
     root.mkdir(parents=True)
-    for name in ['evaluation-packages','torch-cache']:
+    for name in ['evaluation-packages','torch-cache','locks']:
         (tools/name).mkdir(parents=True,exist_ok=True)
     records = {'protocol.json':protocol,'runtime.json':runtime,
                'scheduler.json':{'workers_per_model':a.workers,'before_gate_trials':[]}}
     for name,data in records.items():
         (root/name).write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
     shutil.copyfile(assets/'scenes.json',root/'scene_selection.json')
-    print(json.dumps({'root':str(root),'trials':len(keys)*3,'modeling_checkpoints':len(keys)*9,'launched':False}))
+    print(json.dumps({'root':str(root),'model':a.model,'effort':effort,'trials':len(keys)*3,'modeling_checkpoints':len(keys)*9,'launched':False}))
 
 
 if __name__ == '__main__':

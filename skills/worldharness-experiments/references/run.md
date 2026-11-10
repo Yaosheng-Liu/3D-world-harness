@@ -33,7 +33,7 @@ python "$WH_SKILL/scripts/configure.py" \
 python "$WH_SKILL/scripts/preflight.py" --runtime "$WH_EXP/runtime.json" --output "$WH_EXP/preflight.json"
 ```
 
-按实际位置修改OIDN动态库路径。运行根目录必须全新，脚本不会覆盖旧试验。`runtime.json`只保存本机路径/镜像/代理，不含密钥，但无需公开。协议中的`suite_protocol_sha256`标识共享模板；具体`protocol_sha256`因个人场景、模型、根目录ID而不同，合并时同时核对模板SHA和实际参数。每个root仅一种模型，计划/审核自动与它一致。
+按实际位置修改OIDN动态库路径。运行根目录必须全新，脚本不会覆盖旧试验。`runtime.json`只保存本机路径/镜像/代理，不含密钥，但无需公开。协议中的`suite_protocol_sha256`标识共享模板；具体`protocol_sha256`因个人场景、模型、根目录ID而不同，合并时同时核对模板SHA和实际参数。每个root仅一种模型，计划/审核自动与它一致；配置脚本为Astra/Sol选ultra、Luna选xhigh。
 
 完成工具实际推理冒烟及只读模型READY探针；再执行：
 
@@ -52,7 +52,7 @@ nohup python -u "$WH_REPO/experiments/reconstruction/monitor.py" \
   > "$WH_EXP/monitor-launch.log" 2>&1 &
 ```
 
-一个root只启动一个monitor。它根据`scheduler.json`启动建模worker、评测worker并更新`monitor.json`；不要同时再无过滤启动`run.py`。先1个worker，确认GPU/RAM足够后显式改`workers_per_model`；多GPU可拆成独立root并通过`--docker-gpus device=N`分配。该参数管专业工具CUDA，不等于Blender渲染GPU选择；当前固定评测代码使用CPU Cycles/OIDN。
+一个root只启动一个monitor。`scheduler.json`可用`allowed_conditions`先只放行`single_basic`，待工具初始化完成后开放其他方法；`min_free_disk_bytes`只暂停新任务启动，不终止已有任务。同设备各root共用`runtime.json`中的`gpu_lock`，SAM3与DA3推理按锁串行，Agent对话可并发。它根据`scheduler.json`启动建模worker、评测worker并更新`monitor.json`；不要同时再无过滤启动`run.py`。先1个worker，确认GPU/RAM足够后显式改`workers_per_model`；多GPU可拆成独立root并通过`--docker-gpus device=N`分配。该参数管专业工具CUDA，不等于Blender渲染GPU选择；当前固定评测代码使用CPU Cycles/OIDN。
 
 ```bash
 python "$WH_REPO/experiments/reconstruction/report.py" --root "$WH_EXP"
@@ -78,4 +78,4 @@ cat "$WH_EXP/STATUS.md"
 
 不要打包整个experiment-root：`runs/*/homes/`含认证和会话。现有`sync_records.py --help`提供允许清单同步，可用于SSH复制小记录；工程成果另按明确文件清单打包。公开原始events/提示词前检查是否含本地环境或敏感内容。
 
-协调者按`scene_id + model + effort + condition + checkpoint + suite_protocol_sha256`核对重复，先列失败/缺失，再汇总成功指标。保留预处理成本与Agent成本两张表；不同硬件墙钟时间分开报告。早期Luna试验的单Agent、混合角色Astra/Sol或ultra历史结果不因模型名称相似而并入新批。
+协调者按`scene_id + model + effort + condition + checkpoint + suite_protocol_sha256`核对重复，先列失败/缺失，再汇总成功指标。保留预处理成本与Agent成本两张表；不同硬件墙钟时间分开报告。已有单Agent结果按相同输入、外观规则、提示词、轮次和等级核对后可登记复用，保留原始协议SHA；混合角色Harness不得作为同模型Harness结果并入。

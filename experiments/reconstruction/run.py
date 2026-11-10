@@ -26,6 +26,8 @@ from world_model import scene_hash, source_paths, validate_scene
 def environment(runtime, home):
     env = dict(os.environ, CODEX_HOME=str(home), HTTP_PROXY=runtime["proxy"],
                HTTPS_PROXY=runtime["proxy"], NO_PROXY="localhost,127.0.0.1,::1")
+    if runtime.get("agent_bin"):
+        env["PATH"] = runtime["agent_bin"] + os.pathsep + env["PATH"]
     return env
 
 
@@ -141,6 +143,7 @@ def initialize_run(root, run, spec, runtime):
     write(project / "tool_runtime.json", {**{k: runtime[k] for k in
           ("da3_code","geometry_image","segmentation_image","sam_code","sam_weights","blender")},
           "docker_gpus": runtime.get("docker_gpus", "all"),
+          "gpu_lock": runtime.get("gpu_lock"),
           "tool_timeout_seconds": runtime.get("tool_timeout_seconds", 3600),
           "build_glb_limit_bytes": protocol.get("build_glb_limit_bytes")})
     if spec["condition"] != "single_basic":
@@ -208,12 +211,19 @@ def planning(project, run, runtime, protocol):
             write(run / "planner_usage.json", {**usage,"seconds":time.time()-started,
                   "role":protocol["planner"],"error":planner_error,
                   "usage_measurement":"completed_turn" if usage["completed_turns"] else "last_reported_snapshot_lower_bound"})
+    initialize_objects(project, runtime, relative)
+    return relative
+
+
+def initialize_objects(project, runtime, relative):
     toolbox = Path(__file__).with_name("tools.py")
     for op, extra in (("segment",[]), ("geometry",["--segments","evidence/segments/segments.json"])):
         output = "evidence/segments" if op == "segment" else "evidence/geometry"
+        report = "segments.json" if op == "segment" else "geometry.json"
+        if (project / output / report).exists():
+            continue
         subprocess.run([sys.executable,str(toolbox),"--project",str(project),op,"--plan",relative,
                         "--output",output,*extra],check=True,timeout=runtime.get("tool_timeout_seconds", 3600))
-    return relative
 
 
 def freeze_checkpoint(project, directory, candidate, receipt):
@@ -323,6 +333,8 @@ def run_trial(root, spec, runtime, protocol):
         if spec["condition"] == "harness_tools" and not plan:
             update("planning")
             plan = planning(project, run, runtime, protocol)
+        elif plan and seed.get("initialize_pending"):
+            initialize_objects(project, runtime, plan)
         thread = seed.get("thread_id") if seeded else None
         previous_usage = seed.get("raw_cumulative_usage") if seeded else None
         if seeded:
@@ -348,6 +360,8 @@ def run_trial(root, spec, runtime, protocol):
             prompt += (f"\n本次建模预算 {budget} 秒，须在预算内保存候选并结束本次调用。" if budget is not None else
                        "\n本次返修不设时间上限，完成本轮修改、保存候选和报告后结束调用。")
             prompt += "最终构建与程序校验由控制器完成。"
+            if seeded and checkpoint == start and seed.get("recovery_instruction"):
+                prompt += "\n工程恢复说明：" + seed["recovery_instruction"]
             if plan:
                 prompt += (f"\n初始化计划 {plan}；分割 evidence/segments/segments.json；几何 evidence/geometry/geometry.json。"
                            f"逐项处理物体和未解释区域；输出同目录 modeling_report.json，遵循 modeling_report_schema.json。"

@@ -184,4 +184,6 @@ def docker(runtime, mounts, script, arguments, *, gpu=False):
         result += ["-v", f"{path}:{path}:{mode}"]
     result += ["-v", f"{runtime['da3_code']}:/opt/da3:ro", "-e", "PYTHONPATH=/opt/da3/src",
                "--entrypoint", "python", runtime["geometry_image"], str(script), *map(str, arguments)]
+    if gpu and runtime.get("gpu_lock"):
+        result = ["flock", runtime["gpu_lock"], *result]
     return result

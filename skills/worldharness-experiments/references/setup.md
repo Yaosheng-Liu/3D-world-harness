@@ -51,7 +51,7 @@ npm install --prefix "$WH_TOOLS/codex-workbench" @openai/codex@0.156.1
 
 当前批量脚本使用CLI 0.164.0的`exec --ignore-user-config`；网页App Server适配器固定0.156.1。不要用同一个全局升级覆盖两者。实验每个角色创建独立会话目录，从本人的`auth_home/auth.json`复制认证，文件权限0600。该目录不可回传。
 
-指定模型名是本项目实验配置，不保证任意账号可访问。用本人账号在临时空工程中以目标模型/xhigh执行一句“仅回复READY”的只读探针，保存版本、成功/失败和探针用量，排除正式试验成本。若不可访问，不自行换成别的模型。网络代理只在需要时通过`--proxy`配置自己的地址，默认空字符串；不要照搬原主机127.0.0.1端口。
+指定模型名是本项目实验配置，不保证任意账号可访问。用本人账号在临时空工程中以目标模型及其分配等级执行一句“仅回复READY”的只读探针，保存版本、成功/失败和探针用量，排除正式试验成本。若不可访问，不自行换成别的模型。网络代理只在需要时通过`--proxy`配置自己的地址，默认空字符串；不要照搬原主机127.0.0.1端口。
 
 ```bash
 mkdir -p "$WH_TOOLS/installation-smoke/model-probe"
@@ -62,7 +62,7 @@ mkdir -p "$WH_TOOLS/installation-smoke/model-probe"
   '只回复READY，不调用工具。' > "$WH_TOOLS/installation-smoke/model-probe/events.jsonl"
 ```
 
-按实际分工替换模型；该探针会调用模型，因此只在已获该模型试验授权的账号执行。
+按实际分工替换模型和等级（Astra/Sol ultra，Luna xhigh）；该探针会调用模型，因此只在已获该模型试验授权的账号执行。
 
 ## 下载 DA3 和 SAM3
 

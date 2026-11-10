@@ -1,5 +1,5 @@
 {
-  "id": "worldharness_dl3dv10_intrinsic_xhigh",
+  "id": "worldharness_dl3dv10_intrinsic_same_model",
   "seed": 20261109,
   "scenes": {
     "bedroom": "05c8b23b4c3a186d81efad50fd82be9841b694b5edd818f6f23619a494936746",
@@ -154,5 +154,10 @@
     "view_transform": "Standard",
     "exposure": 0
   },
-  "reasoning_note": "One model family per experiment root; planner, modeler and reviewer all use that same model at xhigh. No effort ablations."
+  "reasoning_note": "One model family per experiment root; planner, modeler and reviewer all use that same model. Astra and Sol use ultra; Luna uses xhigh. No effort ablations.",
+  "model_efforts": {
+    "gpt-6-astra": "ultra",
+    "gpt-6.1-sol": "ultra",
+    "gpt-6-luna": "xhigh"
+  }
 }

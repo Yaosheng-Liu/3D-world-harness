@@ -55,6 +55,8 @@ def main():
             argv += ["--entrypoint", "python", runtime["segmentation_image"], str(REPO / "scripts/sam3_segment.py"),
                      "--project", str(project), "--plan", args.plan, "--output", args.output,
                      "--checkpoint", "/workspace/models/sam3/sam3.pt"]
+            if runtime.get("gpu_lock"):
+                argv = ["flock", runtime["gpu_lock"], *argv]
             filename = "segments.json"
         else:
             if not args.segments:

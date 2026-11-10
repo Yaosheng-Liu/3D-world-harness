@@ -15,6 +15,17 @@ SPEC.loader.exec_module(runner)
 
 
 class ExperimentAgentTests(unittest.TestCase):
+    def test_initialization_recovery_keeps_completed_segmentation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            runner.write(project/"evidence/segments/segments.json", {"existing": True})
+            with patch.object(runner.subprocess, "run") as execute:
+                runner.initialize_objects(project, {"tool_timeout_seconds": None}, "evidence/plan/plan.json")
+            self.assertEqual(execute.call_count, 1)
+            self.assertIn("geometry", execute.call_args.args[0])
+            self.assertNotIn("segment", execute.call_args.args[0])
+            self.assertIsNone(execute.call_args.kwargs["timeout"])
+
     def test_failed_plan_validation_preserves_usage_and_original_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)/"project"
