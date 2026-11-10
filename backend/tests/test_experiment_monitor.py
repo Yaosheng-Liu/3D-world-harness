@@ -14,6 +14,22 @@ SPEC.loader.exec_module(monitor)
 
 
 class ExperimentMonitorTests(unittest.TestCase):
+    def test_mixed_pool_respects_per_method_limits(self):
+        state = {"trials": [
+            {"id": f"{scene}__{condition}__test__ultra", "scene": scene, "model": "test",
+             "condition": condition, "effort": "ultra", "stage": "queued"}
+            for scene in ("a", "b", "c", "d", "e")
+            for condition in ("harness_tools", "single_tools", "single_basic")], "issues": []}
+        settings = {"workers_per_model": 6, "before_gate_trials": [],
+                    "condition_limits": {"single_basic": 4, "single_tools": 1, "harness_tools": 1}}
+        with patch.object(monitor, "worker_alive", return_value=False), \
+             patch.object(monitor, "start_worker", return_value={}) as start:
+            monitor.fill_worker_pool(self.root, self.root/"runtime.json", self.protocol, state, settings, False, False)
+        assigned = [call.args[3][call.args[3].index("--condition") + 1] for call in start.call_args_list]
+        self.assertEqual(assigned.count("single_basic"), 4)
+        self.assertEqual(assigned.count("single_tools"), 1)
+        self.assertEqual(assigned.count("harness_tools"), 1)
+
     def test_condition_gate_admits_rgb_only_trials_before_tool_initialization(self):
         state = {"trials": [
             {"id": f"s__{condition}__test__ultra", "scene": "s", "model": "test",

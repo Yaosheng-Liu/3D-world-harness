@@ -52,7 +52,7 @@ nohup python -u "$WH_REPO/experiments/reconstruction/monitor.py" \
   > "$WH_EXP/monitor-launch.log" 2>&1 &
 ```
 
-一个root只启动一个monitor。`scheduler.json`可用`allowed_conditions`先只放行`single_basic`，待工具初始化完成后开放其他方法；`min_free_disk_bytes`只暂停新任务启动，不终止已有任务。同设备各root共用`runtime.json`中的`gpu_lock`，SAM3与DA3推理按锁串行，Agent对话可并发。它根据`scheduler.json`启动建模worker、评测worker并更新`monitor.json`；不要同时再无过滤启动`run.py`。先1个worker，确认GPU/RAM足够后显式改`workers_per_model`；多GPU可拆成独立root并通过`--docker-gpus device=N`分配。该参数管专业工具CUDA，不等于Blender渲染GPU选择；当前固定评测代码使用CPU Cycles/OIDN。
+一个root只启动一个monitor。`scheduler.json`可用`allowed_conditions`先只放行`single_basic`，待工具初始化完成后开放其他方法；`condition_limits`可按方法限定在运行的任务数，实现单Agent与工具组混排；`min_free_disk_bytes`只暂停新任务启动，不终止已有任务。同设备各root共用`runtime.json`中的`gpu_lock`，SAM3与DA3推理按锁串行，Agent对话可并发。它根据`scheduler.json`启动建模worker、评测worker并更新`monitor.json`；不要同时再无过滤启动`run.py`。先1个worker，确认GPU/RAM足够后显式改`workers_per_model`；多GPU可拆成独立root并通过`--docker-gpus device=N`分配。该参数管专业工具CUDA，不等于Blender渲染GPU选择；当前固定评测代码使用CPU Cycles/OIDN。
 
 ```bash
 python "$WH_REPO/experiments/reconstruction/report.py" --root "$WH_EXP"
