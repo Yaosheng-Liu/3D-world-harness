@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -60,8 +61,15 @@ def command(arguments, log, *, timeout=3600, env=None):
 def cli_usage(path):
     """Read the last reported snapshot; exec resume reports cumulative usage."""
     thread_id, completed, errors = None, [], []
-    for line in Path(path).read_text().splitlines():
-        event = json.loads(line)
+    raw = Path(path).read_text()
+    lines = raw.splitlines()
+    for index, line in enumerate(lines):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            if index == len(lines)-1 and not raw.endswith("\n"):
+                break  # A terminated writer may leave one unfinished event.
+            raise
         if event.get("type") == "thread.started":
             thread_id = event["thread_id"]
         if event.get("type") == "turn.completed":
@@ -168,10 +176,10 @@ def matrix(protocol):
 
 
 def docker(runtime, mounts, script, arguments, *, gpu=False):
-    result = ["docker", "run", "--rm", "--network", "none", "--user", "1000:1000",
+    result = ["docker", "run", "--rm", "--network", "none", "--user", f"{os.getuid()}:{os.getgid()}",
               "-e", "OMP_NUM_THREADS=4", "-e", "OPENBLAS_NUM_THREADS=4"]
     if gpu:
-        result += ["--gpus", "all", "--ipc", "host"]
+        result += ["--gpus", runtime.get("docker_gpus", "all"), "--ipc", "host"]
     for path, mode in mounts:
         result += ["-v", f"{path}:{path}:{mode}"]
     result += ["-v", f"{runtime['da3_code']}:/opt/da3:ro", "-e", "PYTHONPATH=/opt/da3/src",

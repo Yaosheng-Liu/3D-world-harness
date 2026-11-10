@@ -15,6 +15,25 @@ SPEC.loader.exec_module(runner)
 
 
 class ExperimentAgentTests(unittest.TestCase):
+    def test_failed_plan_validation_preserves_usage_and_original_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)/"project"
+            trial = Path(directory)/"trial"
+            def fail(project, output, runtime):
+                output.mkdir(parents=True)
+                events = [{"type":"thread.started","thread_id":"planner-thread"},
+                          {"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}]
+                (output/"events.jsonl").write_text("\n".join(json.dumps(e) for e in events)+"\n")
+                raise ValueError("invalid planner view")
+            with patch.object(runner,"role_home",return_value=trial/"home"), \
+                 patch.object(runner,"run_planner",side_effect=fail):
+                with self.assertRaisesRegex(ValueError,"invalid planner view"):
+                    runner.planning(project,trial,{"codex":"codex","proxy":""},
+                                    {"planner":{"model":"test","effort":"xhigh"},"planner_timeout_seconds":900})
+            record=runner.read(trial/"planner_usage.json")
+            self.assertEqual(record["usage"]["total_tokens"],12)
+            self.assertEqual(record["error"],"invalid planner view")
+
     def test_interrupted_review_reuses_frozen_candidate_without_rebuilding(self):
         with tempfile.TemporaryDirectory() as directory:
             project, trial = Path(directory)/"project", Path(directory)/"trial"
@@ -82,9 +101,10 @@ class ExperimentAgentTests(unittest.TestCase):
                  patch.object(runner, "role_home", return_value=root/"home"), \
                  patch.object(runner, "verify_files"), patch.object(runner, "validate_fixed_views"), \
                  patch.object(runner, "bind_candidate_sources", return_value={"objects":[{"id":"a"}]}), \
-                 patch.object(runner, "build_world", return_value={}), \
+                 patch.object(runner, "build_world", return_value={}) as build, \
                  patch.object(runner, "freeze_checkpoint", return_value=({"objects":[{"id":"a"}]}, {})):
-                runner.run_trial(root, spec, {}, protocol)
+                runner.run_trial(root, spec, {"blender":"/custom/blender"}, protocol)
+            self.assertTrue(all(c.kwargs["blender"] == "/custom/blender" for c in build.call_args_list))
             initialize.assert_not_called()
             self.assertEqual(agent.call_count, 2)
             self.assertEqual(agent.call_args_list[0].args[0], working)
@@ -143,7 +163,7 @@ class ExperimentAgentTests(unittest.TestCase):
                  patch.object(runner,"bind_candidate_sources",return_value={"objects":[{"id":"a"}]}), \
                  patch.object(runner,"build_world",return_value={}), \
                  patch.object(runner,"freeze_checkpoint",return_value=({"objects":[{"id":"a"}]},{})):
-                runner.run_trial(root,spec,{},protocol)
+                runner.run_trial(root,spec,{"blender":"/custom/blender"},protocol)
             self.assertEqual(agent.call_count,1)
             self.assertEqual(agent.call_args.args[1].name,"model_M2")
             self.assertEqual(agent.call_args.kwargs["previous_usage"],saved["raw_cumulative_usage"])

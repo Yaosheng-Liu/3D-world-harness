@@ -2,6 +2,8 @@
 
 本目录只放实验代码与固定协议。原图、模型会话、密钥、Blender 工程和运行结果保存在计算端的独立实验根目录，不提交到 Git。
 
+**十场景协作主实验**请使用 [worldharness-experiments Skill](../../skills/worldharness-experiments/SKILL.md)：包含当前场景ID、统一xhigh协议、GitHub与模型工具安装、不同设备配置和数据校验。下面的三场景/ultra/消融说明及本目录`protocol.json`保留历史口径，不作为十场景批次的默认配置。
+
 ## 实验范围
 
 2026-11-10补充两种外观规则的全新ultra实验：捕获外观允许照片光影；固有材质组禁止直接照片投影，但允许物体自身的干净纹理和显式灯光。每种规则18次、合计36次，所有Agent角色ultra。协议、启动方式和灯光/材质字段见[APPEARANCE.md](APPEARANCE.md)。原来的冻结纹理/灰模实验已按用户要求停止，历史结果保留。

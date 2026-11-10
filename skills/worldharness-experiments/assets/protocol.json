@@ -1,0 +1,158 @@
+{
+  "id": "worldharness_dl3dv10_intrinsic_xhigh",
+  "seed": 20261109,
+  "scenes": {
+    "bedroom": "05c8b23b4c3a186d81efad50fd82be9841b694b5edd818f6f23619a494936746",
+    "study": "2a5ccbce81ab8efb598bc864df36787e3cdbd329c2e365a4170af32a01b33007",
+    "gallery": "de8a78598a8ec407493ff57505beacfdd5072d1a4dbbc124a57924402bbf7503",
+    "company_lounge": "08844ae938730fd04e401d05d34868079b684c70f17235d774b9ab11763e0128",
+    "home_living": "2f16d63dc438eb8d4b7262dda0a805d15b3a133abf0f0d817761d89cd8024c81",
+    "hotel_twin": "3faa84ca98aa8d3794ea15d9b9ed61da35ae1755622af7857715a27ca61c7dea",
+    "open_office": "3fae5e0bb1354fe30a0a23934ab00c7a51004027cc79ae1205f910b7bdefd33f",
+    "compact_gym": "91d19c97d51ee43fbd3372025dfa1bb9230fc41f344585b1ff9d191e138c3510",
+    "kitchen_living": "1e1a3e3bbab066fc0374dc6c40f4778d2c85221330fea126fdcb906980b2bb11",
+    "cafe_counter": "76a1bad134ddd1ebf98fc62fc1040f0febed3f4d08f54fd7aee502405a07ff53"
+  },
+  "models": [
+    "gpt-6-luna"
+  ],
+  "conditions": [
+    "harness_tools",
+    "single_basic",
+    "single_tools"
+  ],
+  "main_effort": "xhigh",
+  "ablation_effort": null,
+  "planner": {
+    "model": "gpt-6-luna",
+    "effort": "xhigh"
+  },
+  "reviewer": {
+    "model": "gpt-6-luna",
+    "effort": "xhigh"
+  },
+  "modeling_passes": 3,
+  "review_passes": 2,
+  "modeling_timeout_seconds": [
+    3600,
+    null,
+    null
+  ],
+  "review_timeout_seconds": null,
+  "planner_timeout_seconds": 900,
+  "training_frames": 48,
+  "camera_manifest": "cameras.json contains every training and validation pose; identical in all conditions",
+  "validation_frames": 6,
+  "test_centers": 12,
+  "test_support_radius": 6,
+  "da3_resolution": 756,
+  "test_render_samples": 32,
+  "test_denoiser": "OpenImageDenoise 2.5.1, linear color/albedo/normal passes; same evaluator for all conditions",
+  "test_render_width": 640,
+  "initialization_mesh": "Neutral TSDF observations with quadric decimation target of 300000 faces; the algorithm may retain more faces, so actual counts are recorded. No photo atlas or surface completion. Coverage losses are diagnostic limitations of provisional evidence. Fixed for all tool conditions before formal trials.",
+  "max_objects": 256,
+  "max_triangles": 1000000,
+  "repetitions": 1,
+  "input_prompt": "根据提供的多视角图像和相机信息，在 Blender 中重建场景。物体应可独立编辑，尽量匹配真实几何、布局、材质和外观，保存建模源码和场景工程。",
+  "repair_prompt": "检查当前场景与参考图像，修正发现的问题并提交新版本。",
+  "geometry_reference": "Independent withheld three-view SIFT triangulation; sparse pseudo-reference, not scan ground truth.",
+  "isolation": "Fresh model thread and per-run CODEX_HOME. Workspace-write sandbox; experiment access restrictions are task instructions, not a read-isolation security boundary.",
+  "initialization_cost": "Fresh training-only DA3/TSDF preprocessing; reuse one frozen cache across conditions on the same scene; record elapsed time and hashes separately.",
+  "early_acceptance": "Complete the fixed M0/R1/M1/R2/M2 schedule even if a reviewer accepts; no third reviewer. Preserve failures without replacing them with extra modeling passes.",
+  "test_access": "Private evaluation inputs are excluded from agent task packets and tool containers. Agents must not inspect experiment siblings, prior reconstructions, or source dataset directories.",
+  "edit_tasks": [
+    "translate",
+    "rotate",
+    "uniform_scale",
+    "hide",
+    "material"
+  ],
+  "edit_targets": {
+    "bedroom": {
+      "main_bed_frame": "蓝色主床床架，不包含床垫、床品和相邻床头柜",
+      "blue_pillow": "蓝色主床上最靠近相机的蓝色枕头",
+      "bedside_lamp": "蓝色主床床头柜上、靠近相机的台灯",
+      "coffee_table": "蓝色沙发前带抽屉的白色茶几",
+      "tan_lounge_chair": "蓝色沙发旁的棕黄色休闲椅，不包含脚凳"
+    },
+    "study": {
+      "reference_chair": "训练帧000010.png中离相机最近的可见蓝灰色椅子",
+      "reference_desktop": "与上述椅子对应的白色桌面",
+      "reference_partition": "与上述桌面邻接、离相机最近的木隔板",
+      "red_seat": "房间远端的红色软包座椅",
+      "gray_door": "自习区尽头的灰色门扇"
+    },
+    "gallery": {
+      "reference_plinth": "训练帧000000.png中最近的独立白色展台",
+      "reference_shelf": "训练帧000000.png右侧最近的壁挂白色小托台",
+      "shelf_ceramics": "上述小托台上的陶件组合，不包含托台",
+      "purple_sign": "墙上的紫色文字展牌",
+      "wooden_door": "木框玻璃门，不包含周围墙面"
+    },
+    "company_lounge": {
+      "stacked_chair": "成排可见灰色椅子中最左侧的一把，含靠背、坐面和椅腿，不包含其他椅子",
+      "striped_sofa": "条纹布面沙发，含自身靠背坐垫，不包含茶几",
+      "coffee_table": "条纹沙发旁的黑色低茶几",
+      "lectern": "灰椅旁带倾斜台面的黑色讲台，含其支架",
+      "wicker_chair": "窗边的编织扶手椅，含自身椅腿"
+    },
+    "home_living": {
+      "sofa": "灰色L形沙发，含自身坐垫靠垫",
+      "coffee_table": "沙发前的矩形茶几",
+      "television": "墙边电视屏幕及自身支架，不含电视柜",
+      "tv_stand": "电视下方的独立电视架，不包含电视和外部电线",
+      "piano": "另一侧墙边的黑色钢琴主体，不包含单独琴凳"
+    },
+    "hotel_twin": {
+      "window_bed": "更靠窗的单人床床架，不包含床垫床品",
+      "door_bed": "更靠门的另一张单人床床架，不包含床垫床品",
+      "armchair": "窗边布面扶手椅",
+      "floor_lamp": "扶手椅旁黑色落地灯，含灯罩和灯杆底座",
+      "round_table": "窗边扶手椅旁的小圆桌"
+    },
+    "open_office": {
+      "yellow_chair": "最靠近入口的黄色办公椅，含扶手底座滚轮",
+      "red_chair": "最靠近入口的红色办公椅，含扶手底座滚轮",
+      "desk": "与上述黄色椅子对应的白色办公桌，含桌腿，不含显示器",
+      "monitor": "上述办公桌上的显示器，含自身底座",
+      "desk_divider": "上述办公桌上的灰色隔板，不包含桌面"
+    },
+    "compact_gym": {
+      "treadmill": "最靠近门的跑步机，含控制屏扶手跑带和自身底座",
+      "elliptical": "窗边椭圆机，含踏板扶手和自身底座",
+      "dumbbell_rack": "哑铃架主体，不含可分离哑铃",
+      "training_bench": "靠墙的黑色训练凳，含自身支架",
+      "water_dispenser": "墙边的饮水机，含顶部水桶，不含旁边垃圾桶"
+    },
+    "kitchen_living": {
+      "sofa": "深灰色沙发，含自身扶手靠垫",
+      "coffee_table": "沙发前圆形茶几，不包含桌上装饰品",
+      "kitchen_island": "厨房中间岛台柜体和台面，不包含摆在上面的材料册和装饰品",
+      "refrigerator": "厨房左侧独立冰箱，不包含周围柜体",
+      "flower_stand": "沙发旁黄色花束下的细腿花架，不含花束花瓶"
+    },
+    "cafe_counter": {
+      "long_table": "咖啡店中央的长木桌，含桌腿，不含周围椅子",
+      "wood_chair": "中央长桌最靠近入口的一把木椅，含自身靠背坐面和椅腿",
+      "banquette": "壁画墙边的绿色长卡座，不含前方桌子",
+      "display_cabinet": "吧台旁独立玻璃展示柜，含自身底座，不含柜内可分离食品",
+      "potted_plant": "吧台旁的大型盆栽，含花盆和植株"
+    }
+  },
+  "limitations": [
+    "One repetition per scene/condition; not variance-controlled.",
+    "First three scenes have prior development use. Ten scenes are a curated DL3DV subset, not a random sample.",
+    "Different hardware/tool environments must be recorded; wall time is not comparable without hardware matching."
+  ],
+  "halt_after_consecutive_failures": 2,
+  "submission": "Modeler saves candidate, edit targets and code. The two repair phases have no hard time limit; the initial modeling limit is 3600 seconds. Controller binds immutable input lineage and performs the final build for every condition. Record actual time and token usage for every attempt and continuation.",
+  "single_agent_feedback": "Original observations, prior scene and short revision prompt only. No independent planner, inventory checklist or external review evidence.",
+  "submission_checks": "Basic engineering validity plus explicit appearance-mode fields. Texture provenance and shadow separation require visual/source inspection.",
+  "build_glb_limit_bytes": 268435456,
+  "appearance_regime": "intrinsic",
+  "color_management": {
+    "view_transform": "Standard",
+    "exposure": 0
+  },
+  "reasoning_note": "One model family per experiment root; planner, modeler and reviewer all use that same model at xhigh. No effort ablations."
+}

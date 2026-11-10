@@ -84,7 +84,7 @@ def prepare_scene(root, name, scene_id, protocol, runtime):
     write(private / "split.json", {"test_centers": centers, "scene_id": scene_id,
                                    "train_indices": training, "validation_indices": validation})
     command([sys.executable, runtime["reference_builder"], "--scene-dir", str(private)],
-            private / "reference.log")
+            private / "reference.log", timeout=runtime.get("tool_timeout_seconds", 3600))
     record = {"name": name, "scene_id": scene_id, "source_frames": count,
               "training_source_indices": training, "validation_source_indices": validation,
               "test_source_indices": centers, "reserved_source_indices": reserved,
@@ -108,11 +108,12 @@ def initialize(root, name, protocol, runtime):
         elapsed = command(docker(runtime, mounts, REPO / "scripts/reconstruct_multiview.py",
             ["--scene", source, "--output", project, "--stage", "infer", "--model",
              "/opt/da3/checkpoints/DA3NESTED-GIANT-LARGE", "--resolution", protocol["da3_resolution"]], gpu=True),
-            shared / "infer.log", timeout=3600)
+            shared / "infer.log", timeout=runtime.get("tool_timeout_seconds", 3600))
         write(shared / "inference_time.json", {"seconds": elapsed})
     if not (project / "world/scene.json").exists():
         command(docker(runtime, mounts, REPO / "scripts/reconstruct_multiview.py",
-                       ["--scene", source, "--output", project, "--stage", "fuse", "--observations-only"]), shared / "fuse.log")
+                       ["--scene", source, "--output", project, "--stage", "fuse", "--observations-only"]),
+                shared / "fuse.log", timeout=runtime.get("tool_timeout_seconds", 3600))
     scene = read(project / "world/scene.json")
     scene["views"] = read(shared / "views.json")
     write(project / "world/scene.json", scene)

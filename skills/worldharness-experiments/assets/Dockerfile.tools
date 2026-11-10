@@ -1,0 +1,32 @@
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.04-py3
+FROM ${BASE_IMAGE}
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ffmpeg libgl1 libglib2.0-0 cmake ninja-build gfortran libtbb-dev \
+    libxi-dev libglu1-mesa-dev xorg-dev wayland-protocols libwayland-dev libxkbcommon-dev \
+    && rm -rf /var/lib/apt/lists/*
+# Retain the base image's matching torch/torchvision/CUDA pair.
+RUN python -m pip install --no-cache-dir \
+    numpy==1.26.4 opencv-python==4.9.0.80 scipy trimesh==4.12.2 scikit-image==0.23.1 \
+    pillow einops==0.8.2 omegaconf==2.3.0 huggingface-hub==0.36.2 safetensors \
+    timm==1.0.17 ftfy==6.1.1 regex iopath==0.1.10 typing_extensions \
+    moviepy==1.0.3 imageio-ffmpeg proglog evo natsort addict plyfile e3nn \
+    lpips==0.1.4 pycocotools 'setuptools<81'
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+      python -m pip install --no-cache-dir open3d==0.19.0; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+      git clone --depth 1 --branch v0.19.0 https://github.com/isl-org/Open3D /tmp/Open3D && \
+      sed -i 's|${ExternalProject_CMAKE_ARGS}|${ExternalProject_CMAKE_ARGS} -DCMAKE_C_FLAGS=-ftls-model=global-dynamic -DCMAKE_Fortran_FLAGS=-ftls-model=global-dynamic|' /tmp/Open3D/3rdparty/openblas/openblas.cmake && \
+      cmake -S /tmp/Open3D -B /tmp/Open3D/build -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_PYTHON_MODULE=ON -DBUILD_CUDA_MODULE=OFF -DBUILD_GUI=OFF -DBUILD_WEBRTC=OFF \
+        -DBUILD_EXAMPLES=OFF -DBUILD_UNIT_TESTS=OFF -DBUNDLE_OPEN3D_ML=OFF \
+        -DCMAKE_C_FLAGS=-ftls-model=global-dynamic -DCMAKE_CXX_FLAGS=-ftls-model=global-dynamic && \
+      cmake --build /tmp/Open3D/build --target pip-package --parallel 4 && \
+      python -m pip install /tmp/Open3D/build/lib/python_package/pip_package/open3d*.whl && \
+      rm -rf /tmp/Open3D; \
+    else echo 'Supported tool architectures: amd64 or arm64' >&2; exit 1; fi
+# Sources and weights are explicit runtime mounts, never baked credentials.
+RUN python -c "import site,pathlib; pathlib.Path(site.getsitepackages()[0],'worldharness.pth').write_text('/opt/da3/src\n/workspace/projects/sam3\n')"
+ENV OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4
+WORKDIR /tmp
+ENTRYPOINT ["python"]

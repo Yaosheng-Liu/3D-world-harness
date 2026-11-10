@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -31,7 +32,7 @@ def main():
     started = time.time()
     if args.operation == "build":
         from world_build import build_world
-        result = build_world(project, scene=bind_candidate_sources(project, args.scene), render=True, timeout=900,
+        result = build_world(project, blender=runtime["blender"], scene=bind_candidate_sources(project, args.scene), render=True, timeout=900,
                              max_glb_bytes=runtime.get("build_glb_limit_bytes"))
         output = project / args.scene.parent / "build_receipt.json"
         write(output, result)
@@ -45,7 +46,8 @@ def main():
         mounts = [(REPO, "ro"), (project, "rw"),
                   (Path(read(project / "split_manifest.json")["source_directory"]), "ro")]
         if args.operation == "segment":
-            argv = ["docker", "run", "--rm", "--network", "none", "--gpus", "all", "--user", "1000:1000",
+            argv = ["docker", "run", "--rm", "--network", "none", "--gpus", runtime.get("docker_gpus", "all"),
+                    "--user", f"{os.getuid()}:{os.getgid()}",
                     "-v", f"{runtime['sam_code']}:/workspace/projects/sam3:ro",
                     "-v", f"{runtime['sam_weights']}:/workspace/models/sam3:ro"]
             for path, mode in mounts:
@@ -61,7 +63,7 @@ def main():
                           ["--project", project, "--plan", args.plan, "--segments", args.segments,
                            "--output", args.output])
             filename = "geometry.json"
-        command(argv, destination.with_suffix(".log"), timeout=3600)
+        command(argv, destination.with_suffix(".log"), timeout=runtime.get("tool_timeout_seconds", 3600))
         result = {"report_path": str(destination / filename)}
     elif args.operation == "depth":
         from world_depth import write_depth_inspection

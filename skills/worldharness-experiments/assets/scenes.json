@@ -1,0 +1,106 @@
+{
+  "selection_version": 3,
+  "dataset_archive_sha256": "2a0fbe688de1194abe319867f6e38c36503edd0f28b28677fde55302a0fa8c14",
+  "scenes": [
+    {
+      "number": 1,
+      "key": "bedroom",
+      "name_zh": "蓝床家居展厅",
+      "scene_id": "05c8b23b4c3a186d81efad50fd82be9841b694b5edd818f6f23619a494936746",
+      "frame_count": 309,
+      "camera_sha256": "88af7a6c3ebc22b72d1a8226a9804a92eb22b985e0f37a091c297447f197f07a",
+      "source_archive_sha256": "25977625a7d4df6e4e3be1ac4b6c5fe91daf98e26b070edd598334f07d61d80f",
+      "focus": "床、床头柜、灯、沙发与茶几的相对布局"
+    },
+    {
+      "number": 2,
+      "key": "study",
+      "name_zh": "隔间自习区",
+      "scene_id": "2a5ccbce81ab8efb598bc864df36787e3cdbd329c2e365a4170af32a01b33007",
+      "frame_count": 367,
+      "camera_sha256": "d9cebac4e08649f2c8405d4c3c0c2b584476899b3f9be6713f0fb3e859bf42af",
+      "source_archive_sha256": "074552f68382b95ade4f31721a5705a98ccd013b094c71008375f976e2b66ec8",
+      "focus": "重复桌椅、隔板归属、狭窄空间遮挡"
+    },
+    {
+      "number": 3,
+      "key": "gallery",
+      "name_zh": "白墙艺术展厅",
+      "scene_id": "de8a78598a8ec407493ff57505beacfdd5072d1a4dbbc124a57924402bbf7503",
+      "frame_count": 401,
+      "camera_sha256": "5e008b1a60bc81526de19590a7f2cf5788936ace2f2dd609b97a3964c4a440df",
+      "source_archive_sha256": "8793cf59dcc1fa2edca45e22059ab524692533951185be3fa30fcd3bcfb8a820",
+      "focus": "弱纹理墙面、独立展台与展品分离"
+    },
+    {
+      "number": 4,
+      "key": "company_lounge",
+      "name_zh": "企业休闲室",
+      "scene_id": "08844ae938730fd04e401d05d34868079b684c70f17235d774b9ab11763e0128",
+      "frame_count": 350,
+      "camera_sha256": "31e02e734208d0c446c7600b45d2588ab3313099bfad37280a1fce62799bee84",
+      "source_archive_sha256": "adf28df4648ac6a404aa672f82764d1a540208dba4ffb92cbda86bf922e886ac",
+      "focus": "成排椅子、沙发与桌台的空间关系"
+    },
+    {
+      "number": 5,
+      "key": "home_living",
+      "name_zh": "住宅客厅",
+      "scene_id": "2f16d63dc438eb8d4b7262dda0a805d15b3a133abf0f0d817761d89cd8024c81",
+      "frame_count": 316,
+      "camera_sha256": "7f13be569f4f92bd12ac35f40e68cf317eb435c695a340fdcab699ba6cc732e2",
+      "source_archive_sha256": "0476d53701ea6bc3adffa463f17b18e08f7a03371e4b264e8fd6986746f8f072",
+      "focus": "沙发、茶几、电视柜与房间布局"
+    },
+    {
+      "number": 6,
+      "key": "hotel_twin",
+      "name_zh": "酒店双床房",
+      "scene_id": "3faa84ca98aa8d3794ea15d9b9ed61da35ae1755622af7857715a27ca61c7dea",
+      "frame_count": 340,
+      "camera_sha256": "88af8ecd0f2b9f016887495f569f8d84514e614bfccb6f54e3ae8102c30f8475",
+      "source_archive_sha256": "c778278372ce215afc200f10ca74f9eb0d3279b724d63876f4054fe54a2513c7",
+      "focus": "两张床、床头柜、扶手椅与灯具分离"
+    },
+    {
+      "number": 7,
+      "key": "open_office",
+      "name_zh": "开放办公区",
+      "scene_id": "3fae5e0bb1354fe30a0a23934ab00c7a51004027cc79ae1205f910b7bdefd33f",
+      "frame_count": 385,
+      "camera_sha256": "8df249677c87f3c8a8b6f8c4c402aee1e4091dca1f97c0200eb09603b18d1344",
+      "source_archive_sha256": "56de3526ddadb8c6366eac80542026e23fcdc52f85449d393783c16db8644cb4",
+      "focus": "办公桌、显示器、转椅的独立归属"
+    },
+    {
+      "number": 8,
+      "key": "compact_gym",
+      "name_zh": "小型健身房",
+      "scene_id": "91d19c97d51ee43fbd3372025dfa1bb9230fc41f344585b1ff9d191e138c3510",
+      "frame_count": 408,
+      "camera_sha256": "7c111b4ccbe40878ce95d76773edf941c441c9b32fceeebe9d03f48ecd837f55",
+      "source_archive_sha256": "4453c080997d82e349dd84dd29f497cac556db4597bb23324bdf1fa20196ecf9",
+      "focus": "跑步机、椭圆机、哑铃架与训练凳；复杂曲面、细杆及器械间遮挡"
+    },
+    {
+      "number": 9,
+      "key": "kitchen_living",
+      "name_zh": "客厅厨房样板间",
+      "scene_id": "1e1a3e3bbab066fc0374dc6c40f4778d2c85221330fea126fdcb906980b2bb11",
+      "frame_count": 330,
+      "camera_sha256": "0fb341af22bfe16b3e6327cabf6265a7ba219b401218c2ae9ee089bb5b273b4c",
+      "source_archive_sha256": "a2128b15aadee5dd0792347601ca22cc4a56265e1b2e2a1901fab7e3ab1023bd",
+      "focus": "沙发、茶几、岛台、柜体与电器分离"
+    },
+    {
+      "number": 10,
+      "key": "cafe_counter",
+      "name_zh": "带吧台的咖啡店",
+      "scene_id": "76a1bad134ddd1ebf98fc62fc1040f0febed3f4d08f54fd7aee502405a07ff53",
+      "frame_count": 416,
+      "camera_sha256": "a1b2e25c6e99d11ac451abf074170e499c93c245672e5585748125311abe24e2",
+      "source_archive_sha256": "fa38be644532b5e541bd49932f44dcb176a1fa6872ff7e348e5707ce99a94821",
+      "focus": "座位区、长桌、卡座、吧台与展示柜；多区域布局和前后遮挡"
+    }
+  ]
+}

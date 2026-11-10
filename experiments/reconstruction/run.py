@@ -140,6 +140,8 @@ def initialize_run(root, run, spec, runtime):
     write(project / "edit_task_targets.json", read(root / "protocol.json")["edit_targets"][spec["scene"]])
     write(project / "tool_runtime.json", {**{k: runtime[k] for k in
           ("da3_code","geometry_image","segmentation_image","sam_code","sam_weights","blender")},
+          "docker_gpus": runtime.get("docker_gpus", "all"),
+          "tool_timeout_seconds": runtime.get("tool_timeout_seconds", 3600),
           "build_glb_limit_bytes": protocol.get("build_glb_limit_bytes")})
     if spec["condition"] != "single_basic":
         write(project / "plan_schema.json", PLAN_SCHEMA)
@@ -183,22 +185,34 @@ def planning(project, run, runtime, protocol):
     os.environ.update({k: environment(runtime, home)[k] for k in previous})
     role = {**protocol["planner"], "codex": runtime["codex"], "home": str(home)}
     started = time.time()
+    planner_error = None
     try:
         relative, plan = run_planner(project, project / "evidence/plan", {"planner":role,
                            "planner_timeout":protocol["planner_timeout_seconds"]})
+    except Exception as error:
+        planner_error = str(error)
+        raise
     finally:
         for k, v in previous.items():
             if v is None:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-    usage = cli_usage(project / "evidence/plan/events.jsonl")
-    write(run / "planner_usage.json", {**usage,"seconds":time.time()-started,"role":protocol["planner"]})
+        events = project / "evidence/plan/events.jsonl"
+        if events.exists():
+            usage = cli_usage(events)
+            snapshot = thread_usage(home, usage["thread_id"]) if usage["thread_id"] else {}
+            for key, value in usage["usage"].items():
+                if value is None and key in snapshot:
+                    usage["usage"][key] = snapshot[key]
+            write(run / "planner_usage.json", {**usage,"seconds":time.time()-started,
+                  "role":protocol["planner"],"error":planner_error,
+                  "usage_measurement":"completed_turn" if usage["completed_turns"] else "last_reported_snapshot_lower_bound"})
     toolbox = Path(__file__).with_name("tools.py")
     for op, extra in (("segment",[]), ("geometry",["--segments","evidence/segments/segments.json"])):
         output = "evidence/segments" if op == "segment" else "evidence/geometry"
         subprocess.run([sys.executable,str(toolbox),"--project",str(project),op,"--plan",relative,
-                        "--output",output,*extra],check=True,timeout=3600)
+                        "--output",output,*extra],check=True,timeout=runtime.get("tool_timeout_seconds", 3600))
     return relative
 
 
@@ -260,7 +274,7 @@ def feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, pl
         verify_files(project, manifest["files"])
     else:
         if scene_hash(bound) != scene_hash(original):
-            build = build_world(project, scene=bound, render=True, timeout=900,
+            build = build_world(project, blender=runtime["blender"], scene=bound, render=True, timeout=900,
                                 max_glb_bytes=protocol.get("build_glb_limit_bytes"))
             candidate, receipt = str(bound_path), str(bound_path.parent / "build_receipt.json")
             write(project / receipt, build)
@@ -366,7 +380,7 @@ def run_trial(root, spec, runtime, protocol):
             previous_usage = usage["raw_cumulative_usage"]
             scene = bind_candidate_sources(project, candidate)
             validate_fixed_views(project, scene)
-            build = build_world(project, scene=scene, render=True, timeout=900,
+            build = build_world(project, blender=runtime["blender"], scene=scene, render=True, timeout=900,
                                 max_glb_bytes=protocol.get("build_glb_limit_bytes"))
             write(project/receipt, build)
             scene, build = freeze_checkpoint(project,run/f"checkpoints/M{checkpoint}",candidate,receipt)

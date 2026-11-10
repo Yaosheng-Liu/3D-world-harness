@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 PATH = Path(__file__).resolve().parents[2] / "experiments/reconstruction/common.py"
@@ -12,6 +13,23 @@ SPEC.loader.exec_module(common)
 
 
 class ExperimentUsageTests(unittest.TestCase):
+    def test_truncated_final_event_keeps_last_completed_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'events.jsonl'
+            event={"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}
+            path.write_text(json.dumps(event)+'\n{"type":')
+            self.assertEqual(common.cli_usage(path)['usage']['total_tokens'],12)
+
+    def test_docker_uses_host_identity_selected_gpu_and_exact_mount_paths(self):
+        with patch.object(common.os, "getuid", return_value=2401), patch.object(common.os, "getgid", return_value=3102):
+            argv = common.docker({"da3_code":"/models/Depth Anything", "geometry_image":"tools:test",
+                                  "docker_gpus":"device=2"}, [(Path('/work/project with spaces'), 'rw')],
+                                 Path('/repo/tool.py'), ['--output', Path('/work/result')], gpu=True)
+        self.assertEqual(argv[argv.index('--user')+1], '2401:3102')
+        self.assertEqual(argv[argv.index('--gpus')+1], 'device=2')
+        self.assertIn('/work/project with spaces:/work/project with spaces:rw', argv)
+        self.assertIn('/models/Depth Anything:/opt/da3:ro', argv)
+
     def test_restart_handoff_uses_latest_model_phase_not_initial_thread_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
             trial=Path(directory)
