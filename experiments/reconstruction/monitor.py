@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-from common import matrix, read, write
+from common import digest, matrix, read, write
 
 
 TERMINAL = {"modeled", "failed"}
@@ -148,10 +148,50 @@ def requeue_legacy_review_timeouts(root, protocol, trials):
     return recovered
 
 
+def requeue_legacy_planner_timeouts(root, runtime, protocol, trials):
+    """Resume deadline-interrupted planning in its original thread exactly once."""
+    if runtime.get("planner_timeout_seconds", protocol.get("planner_timeout_seconds", 900)) is not None:
+        return []
+    actions = []
+    for trial in trials:
+        error = trial.get("error") or ""
+        if trial["stage"] != "failed" or "evidence/plan" not in error or "timed out" not in error:
+            continue
+        run = (root / "runs" / trial["id"]).resolve()
+        usage_path = run / "planner_usage.json"
+        if not usage_path.exists():
+            continue
+        usage = read(usage_path)
+        if not usage.get("thread_id") or trial.get("checkpoints"):
+            continue
+        marker = run / "resume_history" / f"planner_timeout_{digest(usage_path)}.json"
+        if marker.exists():
+            continue
+        state = read(run / "status.json")
+        write(marker, {"status": state, "planner_usage": usage, "at": time.time()})
+        seed = read(run / "resume.json") if (run / "resume.json").exists() else {}
+        seed["planner_thread"] = usage["thread_id"]
+        write(run / "resume.json", seed)
+        state.update(stage="queued", error=None, updated_at=time.time(),
+                     recovery="Resume the existing planner thread without a hard deadline; retain original timeout and cumulative usage")
+        write(run / "status.json", state)
+        actions.append({"action": "planner_requeued", "trial": trial["id"], "at": time.time(),
+                        "thread_id": usage["thread_id"], "history": str(marker)})
+    hold = root / "launch_hold.json"
+    if actions and hold.exists():
+        previous = read(hold)
+        if (previous.get("reason") == "Consecutive trial failures require diagnosis" and previous.get("trials")
+                and set(previous["trials"]) <= {a["trial"] for a in actions}):
+            write(root / "resume_history" / f"planner_hold_{time.time_ns()}.json", previous)
+            hold.unlink()
+    return actions
+
+
 def tick(root, runtime):
     state = snapshot(root)
     protocol = read(root / "protocol.json")
     actions = requeue_legacy_review_timeouts(root, protocol, state["trials"])
+    actions += requeue_legacy_planner_timeouts(root, read(runtime), protocol, state["trials"])
     if actions:
         state = snapshot(root)
     finished = sorted((t for t in state["trials"] if t["stage"] in TERMINAL),

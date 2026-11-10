@@ -39,7 +39,7 @@
     null
   ],
   "review_timeout_seconds": null,
-  "planner_timeout_seconds": 900,
+  "planner_timeout_seconds": null,
   "training_frames": 48,
   "camera_manifest": "cameras.json contains every training and validation pose; identical in all conditions",
   "validation_frames": 6,

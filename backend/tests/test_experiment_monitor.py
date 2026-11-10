@@ -14,6 +14,21 @@ SPEC.loader.exec_module(monitor)
 
 
 class ExperimentMonitorTests(unittest.TestCase):
+    def test_planner_timeout_resumes_original_thread_once_and_preserves_failure(self):
+        trial = self.trial("harness_tools", "high", "failed")
+        state = monitor.read(trial/"status.json")
+        state.update(id=trial.name, error="evidence/plan: timed out after 900 seconds", checkpoints=[])
+        monitor.write(trial/"status.json", state)
+        monitor.write(trial/"planner_usage.json", {"thread_id": "original-plan-thread", "seconds": 900})
+        runtime = {"planner_timeout_seconds": None}
+        actions = monitor.requeue_legacy_planner_timeouts(self.root, runtime, self.protocol, [state])
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(monitor.read(trial/"resume.json")["planner_thread"], "original-plan-thread")
+        self.assertEqual(monitor.read(trial/"status.json")["stage"], "queued")
+        self.assertEqual(monitor.read(Path(actions[0]["history"]))["status"], state)
+        monitor.write(trial/"status.json", state)
+        self.assertEqual(monitor.requeue_legacy_planner_timeouts(self.root, runtime, self.protocol, [state]), [])
+
     def test_explicit_continuation_is_admitted_before_new_trial(self):
         state = {"trials": [
             {"id": f"{scene}__single_basic__test__ultra", "scene": scene, "model": "test",
@@ -127,6 +142,7 @@ class ExperimentMonitorTests(unittest.TestCase):
         self.protocol = {"scenes": {"s": "id"}, "models": ["test"], "conditions": ["single_basic"],
                          "main_effort": "ultra", "ablation_effort": "high", "modeling_passes": 3}
         monitor.write(self.root / "protocol.json", self.protocol)
+        monitor.write(self.root / "runtime.json", {})
 
     def trial(self, condition, effort, stage):
         trial = self.root / "runs" / f"s__{condition}__test__{effort}"

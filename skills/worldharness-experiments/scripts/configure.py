@@ -51,7 +51,7 @@ def main():
                    geometry_image=a.geometry_image,segmentation_image=a.segmentation_image,
                    evaluation_packages=str(tools/'evaluation-packages'),torch_cache=str(tools/'torch-cache'),
                    docker_gpus=a.docker_gpus,gpu_lock=str(tools/'locks/gpu-slot'),
-                   proxy=a.proxy,tool_timeout_seconds=None)
+                   proxy=a.proxy,tool_timeout_seconds=None,build_timeout_seconds=None,planner_timeout_seconds=None)
     root.mkdir(parents=True)
     for name in ['evaluation-packages','torch-cache','locks/gpu-slot']:
         (tools/name).mkdir(parents=True,exist_ok=True)

@@ -188,11 +188,14 @@ def planning(project, run, runtime, protocol):
     previous = {k: os.environ.get(k) for k in ("HTTP_PROXY","HTTPS_PROXY","NO_PROXY")}
     os.environ.update({k: environment(runtime, home)[k] for k in previous})
     role = {**protocol["planner"], "codex": runtime["codex"], "home": str(home)}
+    resume = read(run / "resume.json").get("planner_thread") if (run / "resume.json").exists() else None
+    prior_seconds = read(run / "planner_usage.json")["seconds"] if resume and (run / "planner_usage.json").exists() else 0
+    deadline = runtime.get("planner_timeout_seconds", protocol["planner_timeout_seconds"])
     started = time.time()
     planner_error = None
     try:
         relative, plan = run_planner(project, project / "evidence/plan", {"planner":role,
-                           "planner_timeout":protocol["planner_timeout_seconds"]})
+                           "planner_timeout":deadline, "planner_resume_thread":resume})
     except Exception as error:
         planner_error = str(error)
         raise
@@ -209,7 +212,9 @@ def planning(project, run, runtime, protocol):
             for key, value in usage["usage"].items():
                 if value is None and key in snapshot:
                     usage["usage"][key] = snapshot[key]
-            write(run / "planner_usage.json", {**usage,"seconds":time.time()-started,
+            elapsed = time.time() - started
+            write(run / "planner_usage.json", {**usage,"seconds":prior_seconds+elapsed,
+                  "attempt_seconds":elapsed,"resumed_from_thread":resume,"timeout_seconds":deadline,
                   "role":protocol["planner"],"error":planner_error,
                   "usage_measurement":"completed_turn" if usage["completed_turns"] else "last_reported_snapshot_lower_bound"})
     initialize_objects(project, runtime, relative)

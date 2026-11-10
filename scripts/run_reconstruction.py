@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -69,7 +70,14 @@ def contact_sheets(project, directory):
 
 
 def run_planner(project, directory, runtime):
-    directory.mkdir(parents=True, exist_ok=False)
+    thread = runtime.get("planner_resume_thread")
+    directory.mkdir(parents=True, exist_ok=bool(thread))
+    if thread:
+        archive = directory / "attempts" / uuid.uuid4().hex
+        archive.mkdir(parents=True)
+        for name in ("prompt.txt", "events.jsonl", "stderr.log", "plan.json", "receipt.json"):
+            if (directory / name).is_file():
+                shutil.copyfile(directory / name, archive / name)
     source_hash = file_hash(project_file(project, "observations/manifest.json"))
     schema = directory / "schema.json"
     write_json(schema, PLAN_SCHEMA)
@@ -84,6 +92,8 @@ geometry_strategy=fuse initializes shared DA3/per-object TSDF observations; mode
 This is one-time scene initialization. The modeler owns all subsequent refinement, including omissions, wrong instance associations, split/merge corrections and geometry gaps. The independent critic sends every issue directly to that modeler. The plan is a hypothesis and may be corrected with image evidence in the modeler's report. Do not silently drop an observed object because SAM may miss it, fabricate masks, or assume generic placeholder assets are sufficient.
 Keep this initial plan concise and executable; it is evidence for detailed modeling, not a claim of completed reconstruction.
 """
+    if thread:
+        prompt = "继续此会话中尚未完成的场景计划，沿用已有分析和相同原始输入，不从头重复初始化。完成必要的原图核对，输出原要求的物体计划JSON。此前仅因控制器期限中断；计划仍是建模初始化，不要求预先证明场景重建正确。"
     (directory / "prompt.txt").write_text(prompt, encoding="utf-8")
     role = runtime["planner"]
     output = directory / "plan.json"
@@ -91,9 +101,12 @@ Keep this initial plan concise and executable; it is evidence for detailed model
                "-c", 'approval_policy="never"', "-m", role["model"],
                "-c", f'model_reasoning_effort="{role["effort"]}"', "--json",
                "--output-schema", str(schema), "--output-last-message", str(output)]
-    for image in contact_sheets(project, directory):
-        command.extend(["--image", str(image)])
-    command.append("-")
+    if thread:
+        command.extend(["resume", thread, "-"])
+    else:
+        for image in contact_sheets(project, directory):
+            command.extend(["--image", str(image)])
+        command.append("-")
     with codex_home(role.get("home")), (directory / "events.jsonl").open("w") as events, (directory / "stderr.log").open("w") as errors:
         subprocess.run(command, input=prompt, text=True, stdout=events, stderr=errors,
                        check=True, timeout=runtime.get("planner_timeout", 1800))
@@ -103,9 +116,10 @@ Keep this initial plan concise and executable; it is evidence for detailed model
     if source_hash != file_hash(project_file(project, "observations/manifest.json")):
         raise ValueError("observations changed while planning")
     thread_id = next((json.loads(line)["thread_id"] for line in (directory / "events.jsonl").read_text().splitlines()
-                      if json.loads(line).get("type") == "thread.started"), None)
+                      if json.loads(line).get("type") == "thread.started"), thread)
     write_json(directory / "receipt.json", {"model": role["model"], "effort": role["effort"],
-               "thread_id": thread_id, "plan_sha256": file_hash(output), "source_manifest_sha256": source_hash})
+               "thread_id": thread_id, "plan_sha256": file_hash(output), "source_manifest_sha256": source_hash,
+               "resumed_from_thread": thread, "timeout_seconds": runtime.get("planner_timeout", 1800)})
     return str(output.relative_to(project)), plan
 
 

@@ -15,6 +15,54 @@ SPEC.loader.exec_module(runner)
 
 
 class ExperimentAgentTests(unittest.TestCase):
+    def test_planner_resume_archives_logs_and_keeps_schema_and_read_only_scope(self):
+        core = sys.modules["run_reconstruction"]
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            runner.write(project/"observations/manifest.json", {})
+            output = project/"evidence/plan"
+            output.mkdir(parents=True)
+            (output/"events.jsonl").write_text("original timeout log\n")
+            def execute(command, **kwargs):
+                runner.write(output/"plan.json", {"summary": "continued"})
+                kwargs["stdout"].write(json.dumps({"type": "thread.started", "thread_id": "old-thread"})+"\n")
+            with patch.object(core.subprocess, "run", side_effect=execute) as call, \
+                 patch.object(core, "validate_plan", side_effect=lambda p, plan: plan), \
+                 patch.object(core, "observations"), patch.object(core, "contact_sheets") as sheets:
+                core.run_planner(project, output, {"planner": {"codex": "codex", "model": "test", "effort": "ultra"},
+                                 "planner_timeout": None, "planner_resume_thread": "old-thread"})
+            command = call.call_args.args[0]
+            self.assertEqual(command[-3:], ["resume", "old-thread", "-"])
+            self.assertEqual(command[command.index("-s")+1], "read-only")
+            self.assertIn("--output-schema", command)
+            self.assertIsNone(call.call_args.kwargs["timeout"])
+            sheets.assert_not_called()
+            self.assertEqual(next((output/"attempts").glob("*/events.jsonl")).read_text(), "original timeout log\n")
+
+    def test_planner_resume_keeps_cumulative_tokens_and_accumulates_elapsed_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trial = Path(directory)/"run"
+            project = trial/"project"
+            runner.write(trial/"resume.json", {"planner_thread": "old-thread"})
+            runner.write(trial/"planner_usage.json", {"seconds": 900, "usage": {"total_tokens": 100}})
+            def execute(project, output, runtime):
+                output.mkdir(parents=True)
+                events = [{"type": "thread.started", "thread_id": "old-thread"},
+                          {"type": "turn.completed", "usage": {"input_tokens": 160, "output_tokens": 20}}]
+                (output/"events.jsonl").write_text("\n".join(json.dumps(e) for e in events)+"\n")
+                return "evidence/plan/plan.json", {}
+            with patch.object(runner, "run_planner", side_effect=execute) as planner, \
+                 patch.object(runner, "role_home", return_value=trial/"home"), \
+                 patch.object(runner, "initialize_objects"):
+                runner.planning(project, trial, {"codex": "codex", "proxy": "", "planner_timeout_seconds": None},
+                                {"planner": {"model": "test", "effort": "ultra"}, "planner_timeout_seconds": 900})
+            options = planner.call_args.args[2]
+            self.assertIsNone(options["planner_timeout"])
+            self.assertEqual(options["planner_resume_thread"], "old-thread")
+            usage = runner.read(trial/"planner_usage.json")
+            self.assertEqual(usage["usage"]["total_tokens"], 180)
+            self.assertGreaterEqual(usage["seconds"], 900)
+
     def test_linked_continuation_verifies_its_existing_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
