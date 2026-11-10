@@ -133,8 +133,9 @@ class ExperimentAgentTests(unittest.TestCase):
                  patch.object(runner, "bind_candidate_sources", return_value={"objects":[{"id":"a"}]}), \
                  patch.object(runner, "build_world", return_value={}) as build, \
                  patch.object(runner, "freeze_checkpoint", return_value=({"objects":[{"id":"a"}]}, {})):
-                runner.run_trial(root, spec, {"blender":"/custom/blender"}, protocol)
+                runner.run_trial(root, spec, {"blender":"/custom/blender", "build_timeout_seconds":None}, protocol)
             self.assertTrue(all(c.kwargs["blender"] == "/custom/blender" for c in build.call_args_list))
+            self.assertTrue(all(c.kwargs["timeout"] is None for c in build.call_args_list))
             initialize.assert_not_called()
             self.assertEqual(agent.call_count, 2)
             self.assertEqual(agent.call_args_list[0].args[0], working)

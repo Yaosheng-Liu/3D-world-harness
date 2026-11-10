@@ -145,6 +145,7 @@ def initialize_run(root, run, spec, runtime):
           "docker_gpus": runtime.get("docker_gpus", "all"),
           "gpu_lock": runtime.get("gpu_lock"),
           "tool_timeout_seconds": runtime.get("tool_timeout_seconds", 3600),
+          "build_timeout_seconds": runtime.get("build_timeout_seconds", 900),
           "build_glb_limit_bytes": protocol.get("build_glb_limit_bytes")})
     if spec["condition"] != "single_basic":
         write(project / "plan_schema.json", PLAN_SCHEMA)
@@ -284,7 +285,7 @@ def feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, pl
         verify_files(project, manifest["files"])
     else:
         if scene_hash(bound) != scene_hash(original):
-            build = build_world(project, blender=runtime["blender"], scene=bound, render=True, timeout=900,
+            build = build_world(project, blender=runtime["blender"], scene=bound, render=True, timeout=runtime.get("build_timeout_seconds", 900),
                                 max_glb_bytes=protocol.get("build_glb_limit_bytes"))
             candidate, receipt = str(bound_path), str(bound_path.parent / "build_receipt.json")
             write(project / receipt, build)
@@ -394,7 +395,7 @@ def run_trial(root, spec, runtime, protocol):
             previous_usage = usage["raw_cumulative_usage"]
             scene = bind_candidate_sources(project, candidate)
             validate_fixed_views(project, scene)
-            build = build_world(project, blender=runtime["blender"], scene=scene, render=True, timeout=900,
+            build = build_world(project, blender=runtime["blender"], scene=scene, render=True, timeout=runtime.get("build_timeout_seconds", 900),
                                 max_glb_bytes=protocol.get("build_glb_limit_bytes"))
             write(project/receipt, build)
             scene, build = freeze_checkpoint(project,run/f"checkpoints/M{checkpoint}",candidate,receipt)
