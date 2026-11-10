@@ -50,10 +50,10 @@ def main():
                    sparse_evaluator=str(repo/'experiments/reconstruction/evaluate_sparse.py'),
                    geometry_image=a.geometry_image,segmentation_image=a.segmentation_image,
                    evaluation_packages=str(tools/'evaluation-packages'),torch_cache=str(tools/'torch-cache'),
-                   docker_gpus=a.docker_gpus,gpu_lock=str(tools/'locks/gpu.lock'),
+                   docker_gpus=a.docker_gpus,gpu_lock=str(tools/'locks/gpu-slot'),
                    proxy=a.proxy,tool_timeout_seconds=None)
     root.mkdir(parents=True)
-    for name in ['evaluation-packages','torch-cache','locks']:
+    for name in ['evaluation-packages','torch-cache','locks/gpu-slot']:
         (tools/name).mkdir(parents=True,exist_ok=True)
     records = {'protocol.json':protocol,'runtime.json':runtime,
                'scheduler.json':{'workers_per_model':a.workers,'before_gate_trials':[]}}
