@@ -15,6 +15,25 @@ SPEC.loader.exec_module(runner)
 
 
 class ExperimentAgentTests(unittest.TestCase):
+    def test_linked_continuation_verifies_its_existing_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root, original = base/"batch", base/"original"
+            spec = {"scene": "s", "condition": "single_basic", "model": "test", "effort": "high"}
+            identifier = "s__single_basic__test__high"
+            (root/"runs").mkdir(parents=True)
+            (original/"project").mkdir(parents=True)
+            (root/"runs"/identifier).symlink_to(original, target_is_directory=True)
+            runner.write(original/"resume.json", {})
+            runner.write(original/"status.json", {"started_at": 0, "checkpoints": [
+                {"candidate": "models/M0/candidate.json", "receipt": "models/M0/build_receipt.json"}]})
+            note = original/"checkpoints/M0/note.txt"
+            note.parent.mkdir(parents=True)
+            note.write_text("frozen evidence")
+            runner.write(note.parent/"frozen.json", {"files": {"note.txt": runner.digest(note)}})
+            runner.run_trial(root, spec, {}, {"modeling_passes": 1})
+            self.assertEqual(runner.read(original/"status.json")["stage"], "modeled")
+
     def test_initialization_recovery_keeps_completed_segmentation(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

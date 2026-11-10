@@ -315,7 +315,7 @@ def feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, pl
 
 def run_trial(root, spec, runtime, protocol):
     identifier = f"{spec['scene']}__{spec['condition']}__{spec['model']}__{spec['effort']}"
-    run = root / "runs" / identifier
+    run = (root / "runs" / identifier).resolve()
     seeded = (run / "resume.json").exists()
     if seeded:
         seed = read(run / "resume.json")
