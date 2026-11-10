@@ -14,6 +14,20 @@ SPEC.loader.exec_module(monitor)
 
 
 class ExperimentMonitorTests(unittest.TestCase):
+    def test_explicit_continuation_is_admitted_before_new_trial(self):
+        state = {"trials": [
+            {"id": f"{scene}__single_basic__test__ultra", "scene": scene, "model": "test",
+             "condition": "single_basic", "effort": "ultra", "stage": "queued"}
+            for scene in ("new", "resume")], "issues": []}
+        settings = {"workers_per_model": 1, "before_gate_trials": [],
+                    "priority_trials": [state["trials"][1]["id"]]}
+        with patch.object(monitor, "worker_alive", return_value=False), \
+             patch.object(monitor, "start_worker", return_value={}) as start:
+            monitor.fill_worker_pool(self.root, self.root/"runtime.json", self.protocol, state, settings, False, False)
+        self.assertEqual(start.call_count, 1)
+        args = start.call_args.args[3]
+        self.assertEqual(args[args.index("--scene") + 1], "resume")
+
     def test_mixed_pool_respects_per_method_limits(self):
         state = {"trials": [
             {"id": f"{scene}__{condition}__test__ultra", "scene": scene, "model": "test",
