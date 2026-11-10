@@ -15,6 +15,29 @@ SPEC.loader.exec_module(runner)
 
 
 class ExperimentAgentTests(unittest.TestCase):
+    def test_feedback_applies_unlimited_render_policy_without_rebuilding_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project, trial = Path(directory)/"project", Path(directory)/"trial"
+            scene = {"objects": [], "provenance": {"sources": []}}
+            runner.write(project/"models/M0/candidate.json", scene)
+            def freeze(project, candidate, receipt, output, **kwargs):
+                runner.write(output/"inspection.json", {"inspection_paths": [], "depth": {"inspection_paths": []}})
+                runner.write(output/"editability.json", {})
+                return {"files": {}}
+            def review(*args, **kwargs):
+                runner.write(args[1]/"response.json", {})
+            with patch.object(runner, "bind_candidate_sources", return_value=scene), \
+                 patch.object(runner, "freeze_candidate", side_effect=freeze) as evidence, \
+                 patch.object(runner, "build_world") as build, patch.object(runner, "verify_files"), \
+                 patch.object(runner, "validate_review"), patch.object(runner, "review_schema", return_value={}), \
+                 patch.object(runner, "review_prompt", return_value="review"), \
+                 patch.object(runner, "role_home", return_value=trial/"home"), patch.object(runner, "agent", side_effect=review):
+                runner.feedback(project, trial, {"blender": "blender", "build_timeout_seconds": None},
+                                {"reviewer": {}, "review_timeout_seconds": None}, 0,
+                                "models/M0/candidate.json", "receipt", "plan", None)
+            self.assertIsNone(evidence.call_args.kwargs["render_timeout_seconds"])
+            build.assert_not_called()
+
     def test_planner_resume_archives_logs_and_keeps_schema_and_read_only_scope(self):
         core = sys.modules["run_reconstruction"]
         with tempfile.TemporaryDirectory() as directory:

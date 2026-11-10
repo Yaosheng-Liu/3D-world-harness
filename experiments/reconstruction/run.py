@@ -301,7 +301,8 @@ def feedback(project, run, runtime, protocol, checkpoint, candidate, receipt, pl
         manifest = freeze_candidate(project, candidate, receipt, frozen, blender=runtime["blender"],
             previous_review=project/previous if previous else None, plan_path=plan,
             segments_path="evidence/segments/segments.json", geometry_path="evidence/geometry/geometry.json",
-            modeling_report_path=f"models/M{checkpoint}/modeling_report.json")
+            modeling_report_path=f"models/M{checkpoint}/modeling_report.json",
+            render_timeout_seconds=runtime.get("build_timeout_seconds", 1800))
     inspection, edit = read(frozen/"inspection.json"), read(frozen/"editability.json")
     images = (inspection["inspection_paths"] + inspection.get("overlay_paths", []) +
               inspection["depth"].get("inspection_paths", []) + manifest.get("source_inspection_paths", []) +

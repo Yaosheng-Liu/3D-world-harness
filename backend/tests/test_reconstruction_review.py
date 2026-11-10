@@ -59,6 +59,28 @@ class LocalRebuildTests(unittest.TestCase):
 
 
 class ReviewerRepairLoopTests(unittest.TestCase):
+    def test_edit_evidence_preserves_default_deadline_and_accepts_unlimited_batch_render(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            scene = {"revision": 1, "objects": [], "views": [{"id": "front", "reference_image": "ref.png"}]}
+            write_json(project/"candidate.json", scene)
+            paths = ["build/scene.blend", "build/scene.glb", "build/report.json", "build/render.png"]
+            (project/"build").mkdir()
+            for path in paths:
+                (project/path).write_bytes(b"frozen artifact")
+            write_json(project/"receipt.json", {"scene_hash": scene_hash(scene), "revision": 1, "asset_hashes": {},
+                       "build_dir": str(project/"build"), "files": {Path(p).name: "hash" for p in paths},
+                       "blend_path": paths[0], "glb_path": paths[1], "report_path": paths[2], "render_paths": paths[3:]})
+            for name, options, expected in [("default", {}, 300), ("batch", {"render_timeout_seconds": None}, None)]:
+                with self.subTest(name=name), \
+                     patch("reconstruction_review.validate_scene", side_effect=lambda value, project: value), \
+                     patch("reconstruction_review.source_paths", return_value=[]), \
+                     patch("reconstruction_review.verify_files"), \
+                     patch("reconstruction_review.subprocess.run", side_effect=RuntimeError("stop after render launch")) as execute:
+                    with self.assertRaisesRegex(RuntimeError, "stop after render launch"):
+                        freeze_candidate(project, "candidate.json", "receipt.json", project/name, **options)
+                    self.assertEqual(execute.call_args.kwargs["timeout"], expected)
+
     def test_model_only_views_cannot_replace_all_reference_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

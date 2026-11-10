@@ -14,6 +14,35 @@ SPEC.loader.exec_module(monitor)
 
 
 class ExperimentMonitorTests(unittest.TestCase):
+    def test_evidence_timeout_keeps_frozen_model_and_requeues_once(self):
+        trial = self.trial("harness_tools", "high", "failed")
+        state = monitor.read(trial/"status.json")
+        checkpoint = {"name": "M1", "candidate": "models/M1/candidate.json"}
+        state.update(id=trial.name, condition="harness_tools", checkpoints=[checkpoint],
+                     error="review_editability_blender.py timed out after 1080 seconds")
+        monitor.write(trial/"status.json", state)
+        monitor.write(trial/"project/evidence/plan/plan.json", {"original": True})
+        monitor.write(trial/"resume.json", {"thread_id": "same-modeler", "recovery_instruction": "old M0 repair"})
+        actions = monitor.requeue_legacy_evidence_timeouts(self.root, {"build_timeout_seconds": None}, [state])
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(monitor.read(trial/"status.json")["checkpoints"], [checkpoint])
+        self.assertEqual(monitor.read(trial/"resume.json"),
+                         {"thread_id": "same-modeler", "plan": "evidence/plan/plan.json"})
+        self.assertEqual(monitor.read(Path(actions[0]["history"]))["status"], state)
+        monitor.write(trial/"status.json", state)
+        self.assertEqual(monitor.requeue_legacy_evidence_timeouts(self.root, {"build_timeout_seconds": None}, [state]), [])
+
+    def test_evidence_recovery_does_not_retry_other_errors_or_explicit_deadlines(self):
+        trial = self.trial("harness_tools", "high", "failed")
+        state = {"id": trial.name, "stage": "failed", "condition": "harness_tools",
+                 "checkpoints": [{"name": "M0"}], "error": "review_editability_blender.py exited with code 1"}
+        monitor.write(trial/"project/evidence/plan/plan.json", {})
+        self.assertEqual(monitor.requeue_legacy_evidence_timeouts(self.root, {"build_timeout_seconds": None}, [state]), [])
+        state["error"] = "review_editability_blender.py timed out after 300 seconds"
+        self.assertEqual(monitor.requeue_legacy_evidence_timeouts(self.root, {"build_timeout_seconds": 900}, [state]), [])
+        state["checkpoints"] = []
+        self.assertEqual(monitor.requeue_legacy_evidence_timeouts(self.root, {"build_timeout_seconds": None}, [state]), [])
+
     def test_requested_recovery_can_use_a_free_slot_without_exceeding_total_pool(self):
         live = "live__harness_tools__test__ultra"
         args = ["python", "run.py", "--root", str(self.root), "--model", "test", "--scene", "live",

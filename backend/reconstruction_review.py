@@ -235,7 +235,8 @@ def freeze_plan_evidence(project, scene, output, files, plan_path, segments_path
 
 
 def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="blender", previous_review=None,
-                     plan_path=None, segments_path=None, geometry_path=None, modeling_report_path=None):
+                     plan_path=None, segments_path=None, geometry_path=None, modeling_report_path=None,
+                     render_timeout_seconds=1800):
     """Verify builder output, then independently exercise the reopened Blender file."""
     project, output = Path(project).resolve(), Path(output).resolve()
     if not output.is_relative_to(project):
@@ -286,10 +287,11 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
     job = {"blend_path": receipt["blend_path"], "scene": scene, "output_dir": str(output),
            "inspection_object_ids": inspection_ids}
     write_json(output / "edit_job.json", job)
+    edit_timeout = None if render_timeout_seconds is None else min(render_timeout_seconds, max(300, 20 * len(inspection_ids)))
     with (output / "edit_check.log").open("w") as log:
         subprocess.run([blender, "--background", "--factory-startup", "--python-exit-code", "1",
                         "--python", str(ROOT / "scripts/review_editability_blender.py"),
-                        "--", str(output / "edit_job.json")], check=True, timeout=min(1800, max(300, 20 * len(inspection_ids))),
+                        "--", str(output / "edit_job.json")], check=True, timeout=edit_timeout,
                        stdout=log, stderr=subprocess.STDOUT)
     edit_check = read_json(output / "editability.json")
     if planned:
@@ -303,7 +305,8 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
     write_json(output / "metrics.json", metrics)
     inspection = write_view_inspection(project, scene, receipt)
     from world_depth import write_depth_inspection
-    inspection["depth"] = write_depth_inspection(project, scene, receipt, output / "depth", blender=blender)
+    inspection["depth"] = write_depth_inspection(project, scene, receipt, output / "depth", blender=blender,
+                                                timeout=render_timeout_seconds)
     if inspection["depth"]["status"] == "measured":
         files.update(inspection["depth"]["input_files"])
         files.update(inspection["depth"]["files"])

@@ -39,7 +39,7 @@ def depth_panels(reference, model, confidence, *, depth_max, error_limit):
                     "compared_pixels": int(compared.sum()), "missing_model_pixels": int((trusted & ~hit).sum())}
 
 
-def write_depth_inspection(project, scene, build, output, *, blender="blender", frames=None):
+def write_depth_inspection(project, scene, build, output, *, blender="blender", frames=None, timeout=1800):
     """Generate fresh evidence; never overwrite a previous review or invoke DA3 again."""
     project, output = Path(project).resolve(), Path(output).resolve()
     if not output.is_relative_to(project):
@@ -102,7 +102,7 @@ def write_depth_inspection(project, scene, build, output, *, blender="blender", 
     with (output / "blender.log").open("w") as log:
         subprocess.run([blender, "--background", "--factory-startup", "--python-exit-code", "1",
                         "--python", str(WORKER), "--", str(output / "job.json")],
-                       check=True, timeout=1800, stdout=log, stderr=subprocess.STDOUT)
+                       check=True, timeout=timeout, stdout=log, stderr=subprocess.STDOUT)
     with np.load(output / "model_depth.npz", allow_pickle=False) as archive:
         model = archive["depth"]
         if model.shape != depth.shape or archive["frame_indices"].tolist() != selected:

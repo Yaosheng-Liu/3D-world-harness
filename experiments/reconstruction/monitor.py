@@ -148,6 +148,36 @@ def requeue_legacy_review_timeouts(root, protocol, trials):
     return recovered
 
 
+def requeue_legacy_evidence_timeouts(root, runtime, trials):
+    """Continue frozen reviews interrupted by the superseded render deadline."""
+    if runtime.get("build_timeout_seconds", 900) is not None:
+        return []
+    actions = []
+    for trial in trials:
+        error = trial.get("error") or ""
+        if (trial["stage"] != "failed" or trial.get("condition") != "harness_tools"
+                or not trial.get("checkpoints") or "timed out after" not in error
+                or not any(name in error for name in ("review_editability_blender.py", "depth_inspection_blender.py"))):
+            continue
+        run = (root / "runs" / trial["id"]).resolve()
+        marker = run / "resume_history" / f"evidence_timeout_{trial['checkpoints'][-1]['name']}.json"
+        seed = read(run / "resume.json") if (run / "resume.json").exists() else {}
+        plan = seed.get("plan") or "evidence/plan/plan.json"
+        if marker.exists() or not (run / "project" / plan).is_file():
+            continue
+        state = read(run / "status.json")
+        write(marker, {"status": state, "resume": seed, "at": time.time()})
+        seed["plan"] = plan
+        for key in ("saved_submission", "recovery_instruction", "initialize_pending"):
+            seed.pop(key, None)
+        write(run / "resume.json", seed)
+        state.update(stage="queued", error=None, updated_at=time.time(),
+                     recovery="Continue the existing frozen review without a render deadline; preserve prior attempts")
+        write(run / "status.json", state)
+        actions.append({"action": "evidence_requeued", "trial": trial["id"], "at": time.time(), "history": str(marker)})
+    return actions
+
+
 def requeue_legacy_planner_timeouts(root, runtime, protocol, trials):
     """Resume deadline-interrupted planning in its original thread exactly once."""
     if runtime.get("planner_timeout_seconds", protocol.get("planner_timeout_seconds", 900)) is not None:
@@ -177,13 +207,6 @@ def requeue_legacy_planner_timeouts(root, runtime, protocol, trials):
         write(run / "status.json", state)
         actions.append({"action": "planner_requeued", "trial": trial["id"], "at": time.time(),
                         "thread_id": usage["thread_id"], "history": str(marker)})
-    hold = root / "launch_hold.json"
-    if actions and hold.exists():
-        previous = read(hold)
-        if (previous.get("reason") == "Consecutive trial failures require diagnosis" and previous.get("trials")
-                and set(previous["trials"]) <= {a["trial"] for a in actions}):
-            write(root / "resume_history" / f"planner_hold_{time.time_ns()}.json", previous)
-            hold.unlink()
     return actions
 
 
@@ -192,8 +215,16 @@ def tick(root, runtime):
     protocol = read(root / "protocol.json")
     actions = requeue_legacy_review_timeouts(root, protocol, state["trials"])
     actions += requeue_legacy_planner_timeouts(root, read(runtime), protocol, state["trials"])
+    actions += requeue_legacy_evidence_timeouts(root, read(runtime), state["trials"])
     if actions:
         state = snapshot(root)
+        hold = root / "launch_hold.json"
+        if hold.exists():
+            previous = read(hold)
+            if (previous.get("reason") == "Consecutive trial failures require diagnosis" and previous.get("trials")
+                    and set(previous["trials"]) <= {a["trial"] for a in actions}):
+                write(root / "resume_history" / f"recovered_hold_{time.time_ns()}.json", previous)
+                hold.unlink()
     finished = sorted((t for t in state["trials"] if t["stage"] in TERMINAL),
                       key=lambda t: t.get("updated_at", 0))
     limit = protocol.get("halt_after_consecutive_failures")

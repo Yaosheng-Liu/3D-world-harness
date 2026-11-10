@@ -57,6 +57,7 @@ class DepthTests(unittest.TestCase):
 
     def run_inspection(self, output="check", **kwargs):
         def blender(command, **unused):
+            self.assertEqual(unused["timeout"], kwargs.get("timeout", 1800))
             job = json.loads(Path(command[-1]).read_text())
             self.assertEqual(job["width"], 8)
             self.assertEqual(job["intrinsics"][0][0][2], 3)
@@ -64,6 +65,9 @@ class DepthTests(unittest.TestCase):
                                 depth=np.full((len(job["frame_indices"]), 6, 8), 4.), frame_indices=job["frame_indices"])
         with patch("world_depth.subprocess.run", side_effect=blender):
             return write_depth_inspection(self.project, self.scene, self.build, self.project / output, **kwargs)
+
+    def test_batch_depth_inspection_can_wait_without_a_render_deadline(self):
+        self.assertEqual(self.run_inspection(timeout=None)["status"], "measured")
 
     def test_direction_unknown_and_missing_surface_colors(self):
         reference = np.array([[3., 3., 3., 3., 3., np.nan]])
