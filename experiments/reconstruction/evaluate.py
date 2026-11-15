@@ -144,6 +144,11 @@ def main():
     args=parser.parse_args()
     protocol,runtime=read(args.root/'protocol.json'),read(args.runtime)
     while True:
+        marker=runtime.get('evaluation_ready_marker')
+        if marker and not Path(marker).exists():
+            if not args.watch:break
+            time.sleep(20)
+            continue
         errors=[]
         for trial in sorted((args.root/'runs').glob('*')):
             for frozen in sorted((trial/'checkpoints').glob('M*')):
