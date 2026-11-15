@@ -93,7 +93,7 @@ This is one-time scene initialization. The modeler owns all subsequent refinemen
 Keep this initial plan concise and executable; it is evidence for detailed modeling, not a claim of completed reconstruction.
 """
     if thread:
-        prompt = "继续此会话中尚未完成的场景计划，沿用已有分析和相同原始输入，不从头重复初始化。完成必要的原图核对，输出原要求的物体计划JSON。此前仅因控制器期限中断；计划仍是建模初始化，不要求预先证明场景重建正确。"
+        prompt = "继续此会话中尚未完成的场景计划，沿用已有分析和相同原始输入，不从头重复初始化。完成必要的原图核对，输出原要求的物体计划JSON。计划仍是建模初始化，不要求预先证明场景重建正确。"
     (directory / "prompt.txt").write_text(prompt, encoding="utf-8")
     role = runtime["planner"]
     output = directory / "plan.json"

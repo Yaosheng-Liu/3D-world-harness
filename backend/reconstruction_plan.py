@@ -30,13 +30,13 @@ BOX = {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1},
        "minItems": 4, "maxItems": 4}
 OBSERVATION = record({"frame_index": FRAME, "box": BOX, "description": TEXT})
 PLAN_SCHEMA = record({
-    "schema_version": {"const": 1}, "source_manifest_sha256": TEXT, "summary": TEXT,
+    "schema_version": {"type": "integer", "const": 1}, "source_manifest_sha256": TEXT, "summary": TEXT,
     "objects": {"type": "array", "minItems": 1, "items": record({
         "id": ID, "name": TEXT, "category": TEXT,
         "parent_id": {"anyOf": [ID, {"type": "null"}]},
-        "kind": {"enum": ["group", "object", "part", "structure"]},
+        "kind": {"type": "string", "enum": ["group", "object", "part", "structure"]},
         "priority": {"type": "integer", "minimum": 1},
-        "geometry_strategy": {"enum": ["fuse", "model", "group"]},
+        "geometry_strategy": {"type": "string", "enum": ["fuse", "model", "group"]},
         "segmentation_prompt": TEXT,
         "observations": {"type": "array", "items": OBSERVATION},
         "uncertainty": TEXT,
@@ -49,11 +49,11 @@ PLAN_SCHEMA = record({
     })},
 })
 
-RESOLUTION = {"enum": ["modeled", "excluded", "unresolved"]}
+RESOLUTION = {"type": "string", "enum": ["modeled", "excluded", "unresolved"]}
 _REPORT_FIELDS = {"scene_ids": {"type": "array", "items": ID}, "resolution": RESOLUTION,
                   "reason": TEXT, "frame_indices": {"type": "array", "minItems": 1, "items": FRAME}}
 MODEL_REPORT_SCHEMA = record({
-    "schema_version": {"const": 1}, "plan_sha256": TEXT, "summary": TEXT,
+    "schema_version": {"type": "integer", "const": 1}, "plan_sha256": TEXT, "summary": TEXT,
     "objects": {"type": "array", "items": record({"plan_id": ID, **_REPORT_FIELDS})},
     "regions": {"type": "array", "items": record({"region_index": FRAME, **_REPORT_FIELDS})},
 })

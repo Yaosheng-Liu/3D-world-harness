@@ -28,9 +28,9 @@ TEXT = {"type": "string", "minLength": 1}
 STRINGS = {"type": "array", "items": TEXT}
 REVIEW_SCHEMA = record({
     "candidate_id": TEXT,
-    "verdict": {"enum": ["accepted", "revise", "blocked"]},
+    "verdict": {"type": "string", "enum": ["accepted", "revise", "blocked"]},
     "summary": TEXT,
-    "dimensions": record({key: {"enum": ["passed", "failed", "unknown"]} for key in DIMENSIONS}),
+    "dimensions": record({key: {"type": "string", "enum": ["passed", "failed", "unknown"]} for key in DIMENSIONS}),
     "reviewed_views": STRINGS,
     "checked_objects": STRINGS,
     "resolved_issue_ids": STRINGS,
@@ -38,7 +38,7 @@ REVIEW_SCHEMA = record({
         "id": TEXT, "object_id": TEXT, "view_id": TEXT,
         "region": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1},
                    "minItems": 4, "maxItems": 4},
-        "severity": {"enum": ["blocking", "major", "minor"]},
+        "severity": {"type": "string", "enum": ["blocking", "major", "minor"]},
         "evidence": TEXT, "acceptance_criterion": TEXT,
     })},
 })
@@ -46,12 +46,12 @@ REVIEW_SCHEMA = record({
 
 HISTORICAL_PLANNED_REVIEW_SCHEMA = deepcopy(REVIEW_SCHEMA)
 _planned_issue = HISTORICAL_PLANNED_REVIEW_SCHEMA["properties"]["issues"]["items"]
-_planned_issue["properties"]["target"] = {"enum": ["planning", "segmentation", "modeling"]}
+_planned_issue["properties"]["target"] = {"type": "string", "enum": ["planning", "segmentation", "modeling"]}
 _planned_issue["required"].append("target")
 
 PLANNED_REVIEW_SCHEMA = deepcopy(REVIEW_SCHEMA)
 _planned_issue = PLANNED_REVIEW_SCHEMA["properties"]["issues"]["items"]
-_planned_issue["properties"]["category"] = {"enum": [
+_planned_issue["properties"]["category"] = {"type": "string", "enum": [
     "inventory", "segmentation", "spatial_structure", "silhouette", "texture_alignment", "lighting",
     "geometry", "appearance", "editability",
 ]}
