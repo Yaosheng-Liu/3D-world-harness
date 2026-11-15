@@ -127,6 +127,11 @@ def local_rebuild_prompt(project, review_path, model_dir):
 
 def validate_fixed_views(project, scene):
     """Keep the published reference protocol; additional inspection views are allowed."""
+    experiment = Path(project) / "experiment.json"
+    if experiment.exists():
+        spec = read_json(experiment)
+        if spec.get("input_mode") == "unposed_rgb" and spec["condition"] == "single_basic":
+            return  # This protocol supplies no reference cameras to the basic arm.
     base = WorldStore(project).read()
     candidate = {view["id"]: view for view in scene["views"]}
     for view in base["views"]:

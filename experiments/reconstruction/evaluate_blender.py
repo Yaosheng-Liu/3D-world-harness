@@ -39,6 +39,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.open_mainfile(filepath=job["blend"])
     scene = bpy.context.scene
+    from world_blender import configure_cycles_device
+    configure_cycles_device(scene)
     deps = bpy.context.evaluated_depsgraph_get()
     vertices, faces, owners = [], [], []
     identifiers=sorted(o['stable_id'] for o in scene.objects if o.get('stable_id'))

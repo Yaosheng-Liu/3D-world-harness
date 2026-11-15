@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from pathlib import Path
 import sys
 import time
@@ -38,6 +39,9 @@ def evaluate(root, trial, checkpoint, runtime, protocol):
     output=root/'evaluation_results'/trial.name/checkpoint
     if (output/'complete.json').exists():
         return read(output/'complete.json')
+    if protocol.get('input_mode') == 'unposed_rgb':
+        from evaluate_unposed import evaluate as evaluate_unposed
+        return evaluate_unposed(root, trial, checkpoint, runtime, protocol)
     output.mkdir(parents=True,exist_ok=True)
     started=time.time()
     manifest=read(frozen/'frozen.json')
@@ -111,6 +115,18 @@ def collect(root):
                  'edit_semantic_verification':result['edit_semantic_verification']}
             geometry=result['geometry']
             row.update(geometry['macro_average_metrics'])
+            if spec.get('input_mode') == 'unposed_rgb':
+                alignment=result['alignment']
+                row.update({key:alignment[key] for key in ('training_center_rmse_m', 'training_rotation_mean_deg')})
+                frozen=trial/'checkpoints'/f'M{number}'
+                calls=frozen/'tool_calls.jsonl'
+                tool_calls=[json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+                row['tool_seconds_including_wait']=sum(call['seconds'] for call in tool_calls)
+                row['controller_build_seconds_including_wait']=sum(read(trial/'checkpoints'/f'M{i}'/'receipt.json')['controller_build_seconds'] for i in range(number+1))
+                initialization=root/'shared'/spec['scene']/'initialization.json'
+                prep=read(initialization) if initialization.exists() and spec['condition']!='single_basic' else None
+                row['da3_preprocessing_seconds_equivalent']=prep['pose']['seconds'] if prep else 0
+                row['tsdf_preprocessing_seconds_equivalent']=prep['fusion_seconds'] if prep else 0
             row['geometry_metrics_path']=str(metric.parent/'geometry_metrics.json')
             rows.append(row)
     write(root/'results.json',rows)

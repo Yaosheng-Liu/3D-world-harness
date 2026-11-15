@@ -46,13 +46,19 @@ def main():
         mounts = [(REPO, "ro"), (project, "rw"),
                   (Path(read(project / "split_manifest.json")["source_directory"]), "ro")]
         if args.operation == "segment":
-            argv = ["docker", "run", "--rm", "--network", "none", "--gpus", runtime.get("docker_gpus", "all"),
+            if runtime.get("tool_python"):
+                argv = ["env", "CUDA_VISIBLE_DEVICES=" + str(runtime.get("cuda_visible_devices", 0)),
+                        runtime["tool_python"], str(REPO / "scripts/sam3_segment.py"),
+                        "--project", str(project), "--plan", args.plan, "--output", args.output,
+                        "--checkpoint", str(Path(runtime["sam_weights"]) / "sam3.pt")]
+            else:
+                argv = ["docker", "run", "--rm", "--network", "none", "--gpus", runtime.get("docker_gpus", "all"),
                     "--user", f"{os.getuid()}:{os.getgid()}",
                     "-v", f"{runtime['sam_code']}:/workspace/projects/sam3:ro",
                     "-v", f"{runtime['sam_weights']}:/workspace/models/sam3:ro"]
-            for path, mode in mounts:
-                argv += ["-v", f"{path}:{path}:{mode}"]
-            argv += ["--entrypoint", "python", runtime["segmentation_image"], str(REPO / "scripts/sam3_segment.py"),
+                for path, mode in mounts:
+                    argv += ["-v", f"{path}:{path}:{mode}"]
+                argv += ["--entrypoint", "python", runtime["segmentation_image"], str(REPO / "scripts/sam3_segment.py"),
                      "--project", str(project), "--plan", args.plan, "--output", args.output,
                      "--checkpoint", "/workspace/models/sam3/sam3.pt"]
             if runtime.get("gpu_lock"):

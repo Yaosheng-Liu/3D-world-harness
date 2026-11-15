@@ -126,7 +126,9 @@ def bind_candidate_sources(project, candidate):
         validate_appearance(scene, spec["appearance_regime"])
         # Both new regimes use the same display transform regardless of shader type.
         scene["color_management"] = {"view_transform": "Standard", "exposure": 0}
-    names = ["observations/manifest.json", "cameras.json"]
+    names = ["observations/manifest.json"]
+    if not (spec.get("input_mode") == "unposed_rgb" and spec["condition"] == "single_basic"):
+        names.append("cameras.json")
     if spec["condition"] != "single_basic":
         names += ["dense/inference.json", "reconstruction_report.json"]
     sources = scene["provenance"]["sources"]
@@ -175,14 +177,26 @@ def matrix(protocol):
     return rows
 
 
-def docker(runtime, mounts, script, arguments, *, gpu=False):
+def docker(runtime, mounts, script, arguments, *, gpu=False, extra_env=None):
+    if runtime.get("tool_python"):
+        result = [runtime["tool_python"], str(script), *map(str, arguments)]
+        env = dict(extra_env or {})
+        if gpu and runtime.get("cuda_visible_devices") is not None:
+            env["CUDA_VISIBLE_DEVICES"] = str(runtime["cuda_visible_devices"])
+        if env:
+            result = ["env", *[f"{k}={v}" for k, v in env.items()], *result]
+        if gpu and runtime.get("gpu_lock"):
+            result = ["flock", runtime["gpu_lock"], *result]
+        return result
     result = ["docker", "run", "--rm", "--network", "none", "--user", f"{os.getuid()}:{os.getgid()}",
               "-e", "OMP_NUM_THREADS=4", "-e", "OPENBLAS_NUM_THREADS=4"]
     if gpu:
         result += ["--gpus", runtime.get("docker_gpus", "all"), "--ipc", "host"]
     for path, mode in mounts:
         result += ["-v", f"{path}:{path}:{mode}"]
-    result += ["-v", f"{runtime['da3_code']}:/opt/da3:ro", "-e", "PYTHONPATH=/opt/da3/src",
+    for key, value in {"PYTHONPATH": "/opt/da3/src", **(extra_env or {})}.items():
+        result += ["-e", f"{key}={value}"]
+    result += ["-v", f"{runtime['da3_code']}:/opt/da3:ro",
                "--entrypoint", "python", runtime["geometry_image"], str(script), *map(str, arguments)]
     if gpu and runtime.get("gpu_lock"):
         result = ["flock", runtime["gpu_lock"], *result]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,25 @@ from bpy_extras.object_utils import world_to_camera_view
 
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
+
+
+def configure_cycles_device(scene):
+    """CPU remains the default; an assigned worker may explicitly select CUDA/OptiX."""
+    backend = os.environ.get("WORLDHARNESS_CYCLES_DEVICE", "CPU")
+    scene.cycles.device = "CPU"
+    if backend == "CPU":
+        return
+    if backend not in {"CUDA", "OPTIX"}:
+        raise ValueError("WORLDHARNESS_CYCLES_DEVICE must be CPU, CUDA or OPTIX")
+    preferences = bpy.context.preferences.addons["cycles"].preferences
+    preferences.compute_device_type = backend
+    preferences.get_devices()
+    available = [device for device in preferences.devices if device.type == backend]
+    if not available:
+        raise ValueError(f"No {backend} device is available to this worker")
+    for device in preferences.devices:
+        device.use = device.type == backend
+    scene.cycles.device = "GPU"
 
 
 def material(name, spec, project=None):
@@ -365,7 +385,8 @@ def build(job):
     scene.camera = next(iter(cameras.values()))
     scene.render.engine = "CYCLES"
     captured = [obj["material"].get("appearance") == "captured" for obj in source["objects"]]
-    scene.cycles.device, scene.cycles.samples = "CPU", 1 if all(captured) else 24
+    configure_cycles_device(scene)
+    scene.cycles.samples = 1 if all(captured) else 24
     scene.cycles.use_denoising = False
     scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = 640, 480, 100
     scene.render.image_settings.file_format = "PNG"

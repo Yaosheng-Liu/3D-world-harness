@@ -104,6 +104,13 @@ def role_home(run, role, runtime):
 
 
 def initialize_run(root, run, spec, runtime):
+    if spec.get("input_mode") == "unposed_rgb":
+        from unposed import initialize_run as initialize_unposed
+        return initialize_unposed(root, run, spec, runtime, initialize_calibrated_run)
+    return initialize_calibrated_run(root, run, spec, runtime)
+
+
+def initialize_calibrated_run(root, run, spec, runtime):
     shared = root / "shared" / spec["scene"]
     source = shared / "project"
     project = run / "project"
@@ -147,6 +154,10 @@ def initialize_run(root, run, spec, runtime):
           "tool_timeout_seconds": runtime.get("tool_timeout_seconds", 3600),
           "build_timeout_seconds": runtime.get("build_timeout_seconds", 900),
           "build_glb_limit_bytes": protocol.get("build_glb_limit_bytes")})
+    if runtime.get("tool_python"):
+        tools = read(project / "tool_runtime.json")
+        tools.update({k: runtime[k] for k in ("tool_python", "cuda_visible_devices") if k in runtime})
+        write(project / "tool_runtime.json", tools)
     if spec["condition"] != "single_basic":
         write(project / "plan_schema.json", PLAN_SCHEMA)
     packet = f"""# Experiment task packet
@@ -250,6 +261,12 @@ def freeze_checkpoint(project, directory, candidate, receipt):
     for key, suffix in (("blend_path","blend"),("glb_path","glb")):
         shutil.copyfile(build[key], directory / f"scene.{suffix}")
     write(directory / "scene.json", scene)
+    if read(project / "experiment.json").get("input_mode") == "unposed_rgb":
+        from unposed import freeze_cameras
+        freeze_cameras(project, (project / candidate).parent, directory)
+        calls = project / "tool_calls.jsonl"
+        if calls.exists():
+            shutil.copyfile(calls, directory / "tool_calls.jsonl")
     write(directory / "receipt.json", build)
     shutil.copyfile((project / candidate).parent / "edit_targets.json", directory / "edit_targets.json")
     files = {str(f.relative_to(directory)): digest(f) for f in directory.rglob("*") if f.is_file()}
@@ -367,6 +384,8 @@ def run_trial(root, spec, runtime, protocol):
             prompt += (f"\n本次建模预算 {budget} 秒，须在预算内保存候选并结束本次调用。" if budget is not None else
                        "\n本次返修不设时间上限，完成本轮修改、保存候选和报告后结束调用。")
             prompt += "最终构建与程序校验由控制器完成。"
+            if spec.get("input_mode") == "unposed_rgb":
+                prompt += "\n同时按CAMERA_OUTPUT.md在本轮目录保存input_cameras.json；这是对输入帧相机的估计输出，与候选场景使用相同坐标。"
             if seeded and checkpoint == start and seed.get("recovery_instruction"):
                 prompt += "\n工程恢复说明：" + seed["recovery_instruction"]
             if plan:
@@ -401,8 +420,10 @@ def run_trial(root, spec, runtime, protocol):
             previous_usage = usage["raw_cumulative_usage"]
             scene = bind_candidate_sources(project, candidate)
             validate_fixed_views(project, scene)
+            build_started = time.monotonic()
             build = build_world(project, blender=runtime["blender"], scene=scene, render=True, timeout=runtime.get("build_timeout_seconds", 900),
                                 max_glb_bytes=protocol.get("build_glb_limit_bytes"))
+            build["controller_build_seconds"] = time.monotonic() - build_started
             write(project/receipt, build)
             scene, build = freeze_checkpoint(project,run/f"checkpoints/M{checkpoint}",candidate,receipt)
             state["checkpoints"].append({"name":f"M{checkpoint}","candidate":candidate,
@@ -438,6 +459,9 @@ def main():
             if any(getattr(args,k) and getattr(args,k)!=row[k] for k in ("model","condition","effort")):
                 continue
             spec={"scene":name,**row,"protocol_sha256":digest(args.root/"protocol.json")}
+            if protocol.get("input_mode"):
+                spec["input_mode"] = protocol["input_mode"]
+                spec["execution_host"] = os.uname().nodename
             if protocol.get("appearance_regime"):
                 spec["appearance_regime"] = protocol["appearance_regime"]
             identifier=f"{name}__{row['condition']}__{row['model']}__{row['effort']}"
