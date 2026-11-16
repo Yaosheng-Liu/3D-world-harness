@@ -353,20 +353,20 @@ def freeze_candidate(project, candidate_path, receipt_path, output, *, blender="
 
 
 def validate_review(manifest, review, previous=None):
-    """Reject unbound, incomplete, or self-contradictory approvals."""
+    """Keep repair feedback advisory; check complete approvals before publication."""
     Draft202012Validator(review_schema(manifest)).validate(review)
+    if review["candidate_id"] != manifest["candidate_id"]:
+        raise ValueError("review belongs to a different frozen candidate")
+    if review["verdict"] != "accepted":
+        return False
     for field in ("reviewed_views", "checked_objects", "resolved_issue_ids"):
         if len(review[field]) != len(set(review[field])):
             raise ValueError(f"{field} must not repeat IDs")
-    if review["candidate_id"] != manifest["candidate_id"]:
-        raise ValueError("review belongs to a different frozen candidate")
     objects = set(manifest["object_ids"]) | set(manifest.get("planned_object_ids", []))
     required_objects = set(manifest["object_ids"]) | set(manifest.get("required_object_ids", []))
     views = set(manifest["view_ids"]) | set(manifest.get("source_view_ids", []))
     issue_objects = objects | ({"scene"} if manifest.get("plan_path") else set())
-    accepted = review["verdict"] == "accepted"
-    # A revision checklist may also mention renamed or missing objects.
-    if not set(review["reviewed_views"]) <= views or (accepted and not set(review["checked_objects"]) <= objects):
+    if not set(review["reviewed_views"]) <= views or not set(review["checked_objects"]) <= objects:
         raise ValueError("review refers to unknown objects or views")
     ids = [issue["id"] for issue in review["issues"]]
     if len(ids) != len(set(ids)):
@@ -386,13 +386,13 @@ def validate_review(manifest, review, previous=None):
         raise ValueError(f"issues cannot be both open and resolved: {sorted(resolved & set(ids))}")
     if old - (resolved | set(ids)):
         raise ValueError(f"every previous issue must be rechecked, resolved or retained: {sorted(old - (resolved | set(ids)))}")
-    if accepted and (not all(manifest["checks"].values())
+    if (not all(manifest["checks"].values())
                      or any(review["dimensions"][key] != "passed" for key in DIMENSIONS)
                      or views != set(review["reviewed_views"])
                      or not required_objects <= set(review["checked_objects"])
                      or any(issue["severity"] != "minor" for issue in review["issues"])):
         raise ValueError("acceptance requires all views, objects, dimensions and deterministic checks")
-    return accepted
+    return True
 
 
 def accept_candidate(project, store, *, candidate_path, review_path, expected_revision, expected_scene_revision):

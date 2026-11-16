@@ -130,10 +130,9 @@ def create_shape(spec, name, collection, project):
             bpy.ops.object.join()
         obj = bpy.context.object
         bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        obj.data.validate()
         if not obj.data.vertices or not obj.data.polygons:
             raise ValueError(f"OBJ must contain polygon geometry: {spec['path']}")
-        if obj.data.validate():
-            raise ValueError(f"OBJ contains invalid topology; repair the source mesh before building: {spec['path']}")
         for vertex in obj.data.vertices:
             vertex.co = Vector([value * scale for value, scale in zip(vertex.co, spec["scale"])])
     else:

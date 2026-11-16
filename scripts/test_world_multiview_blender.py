@@ -88,10 +88,17 @@ def main():
                 raise AssertionError(f"Old build accepted changed source: {relative}")
         finally:
             path.write_bytes(original)
-    # Invalid source topology and absent UVs fail explicitly before export.
+    # Blender cleans duplicate faces; usable textured geometry still needs UVs.
+    (project / "duplicate.obj").write_text((project/"quad.obj").read_text()+"f 4/4 3/3 2/2 1/1\n")
+    duplicate = copy.deepcopy(world)
+    duplicate["objects"][0]["visual"][0]["path"] = "duplicate.obj"
+    cleaned = build_world(project, scene=duplicate, blender=args.blender, render=False)
+    cleaned_report = json.loads(Path(cleaned["report_path"]).read_text())
+    assert cleaned_report["reopened_blend"]
+    assert cleaned_report["objects"] == report["objects"]
     for name, contents, expected_error in (
         ("no_uv.obj", "v -1 -1 0\nv 1 -1 0\nv 1 1 0\nf 1 2 3\n", "requires UV coordinates"),
-        ("duplicate.obj", (project/"quad.obj").read_text()+"f 4/4 3/3 2/2 1/1\n", "invalid topology"),
+        ("empty.obj", "v 0 0 0\n", "polygon geometry"),
     ):
         (project / name).write_text(contents)
         invalid = copy.deepcopy(world)
@@ -106,7 +113,7 @@ def main():
     (project / "acceptance.json").write_text(json.dumps({"build":result, "camera_checks":report["camera_checks"],
           "passed":True, "checks":["OpenGL roll", "off-center principal point", "fx differs from fy",
           "per-view dimensions", "transparent missing surface", "UV and images survive Blender reopening",
-          "embedded unlit GLB texture and tint", "captured omits normals; surface preserves normals", "default surface texture export", "missing UV and duplicate topology rejected", "all explicit source hashes", "changed mesh, texture, references and provenance invalidate build"]},indent=2)+"\n")
+          "embedded unlit GLB texture and tint", "captured omits normals; surface preserves normals", "default surface texture export", "duplicate faces cleaned without changing geometry", "missing UV and empty meshes rejected", "all explicit source hashes", "changed mesh, texture, references and provenance invalidate build"]},indent=2)+"\n")
     print(json.dumps({"passed":True,"acceptance":str(project/"acceptance.json"),"camera_checks":report["camera_checks"]}))
 
 

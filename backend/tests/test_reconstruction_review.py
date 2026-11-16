@@ -240,10 +240,10 @@ class ReviewGateTests(unittest.TestCase):
             validate_review(self.manifest, {**review_fixture(), "issues": [issue]})
         self.assertFalse(validate_review(self.manifest, previous))
 
-    def test_issue_references_and_regions_must_be_real(self):
+    def test_accepted_issue_references_and_regions_must_be_real(self):
         issue = {"id": "a", "object_id": "bed", "view_id": "back", "region": [.8,.1,.2,.8],
                  "severity": "major", "evidence": "missing", "acceptance_criterion": "complete"}
-        review = {**review_fixture(), "verdict": "revise", "issues": [issue]}
+        review = {**review_fixture(), "issues": [issue]}
         with self.assertRaises(ValueError): validate_review(self.manifest, review)
         issue.update(region=[0,0,1,1], object_id="imaginary")
         with self.assertRaises(ValueError): validate_review(self.manifest, review)
@@ -254,8 +254,18 @@ class ReviewGateTests(unittest.TestCase):
         self.assertEqual(review["checked_objects"], ["bed", "wall", "old_cabinet"])
         with self.assertRaises(ValueError):
             validate_review(self.manifest, {**review, "verdict": "accepted"})
-        with self.assertRaises(ValueError):
-            validate_review(self.manifest, {**review, "reviewed_views": ["imaginary"]})
+        self.assertFalse(validate_review(self.manifest, {**review, "reviewed_views": ["imaginary"]}))
+
+    def test_revision_feedback_preserves_missing_inventory_and_leaves_resolution_to_agents(self):
+        issue = {"id": "missing-exterior", "object_id": "window_exterior", "view_id": "source_37",
+                 "region": [.8, .1, .2, .8], "severity": "major", "evidence": "Excluded exterior is visible",
+                 "acceptance_criterion": "Model the visible exterior"}
+        review = {**review_fixture(), "verdict": "revise", "issues": [issue]}
+        original = deepcopy(review)
+        self.assertFalse(validate_review(self.manifest, review))
+        self.assertEqual(review, original)
+        with self.assertRaisesRegex(ValueError, "different frozen candidate"):
+            validate_review(self.manifest, {**review, "candidate_id": "another-candidate"})
 
     def test_cumulative_resolutions_must_be_known_and_cannot_hide_open_issues(self):
         issue = {"id": "bed-back", "object_id": "bed", "view_id": "back", "region": [.1,.1,.8,.8],
@@ -268,7 +278,8 @@ class ReviewGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown issue IDs"):
             validate_review(self.manifest, {**resolved, "resolved_issue_ids": ["bed-back", "invented"]}, previous)
         with self.assertRaisesRegex(ValueError, "both open and resolved"):
-            validate_review(self.manifest, {**retained, "resolved_issue_ids": ["bed-back"]}, previous)
+            validate_review(self.manifest, {**retained, "verdict": "accepted", "resolved_issue_ids": ["bed-back"]}, previous)
+        self.assertFalse(validate_review(self.manifest, {**retained, "resolved_issue_ids": ["bed-back"]}, previous))
         with self.assertRaisesRegex(ValueError, "every previous issue"):
             validate_review(self.manifest, {**review_fixture(), "resolved_issue_ids": ["older-fix"]}, previous)
     def test_changed_source_and_outside_project_are_rejected(self):
@@ -485,8 +496,9 @@ class PlannedReviewTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     validate_review(manifest, missing_evidence)
                 review["issues"][0]["view_id"] = "unbound-view"
+                self.assertFalse(validate_review(manifest, review))
                 with self.assertRaises(ValueError):
-                    validate_review(manifest, review)
+                    validate_review(manifest, {**review, "verdict": "accepted"})
 
     def test_historical_target_schema_is_only_accepted_for_old_manifests(self):
         from jsonschema import ValidationError
