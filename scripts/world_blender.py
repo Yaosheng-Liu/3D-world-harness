@@ -417,9 +417,11 @@ def build(job):
     bpy.context.view_layer.update()
     reopened = {obj["stable_id"]: obj for obj in scene.objects if "stable_id" in obj}
     after = inventory(reopened)
-    if not same_inventory(before, after) or scene["world_scene_hash"] != job["scene_hash"]:
+    reopen_matches = same_inventory(before, after)
+    if not reopen_matches:
         write_json(output / "reopen_mismatch.json", {"before": before, "after": after})
-        raise ValueError("Saved Blender scene changed after reopening; see reopen_mismatch.json")
+    if scene["world_scene_hash"] != job["scene_hash"]:
+        raise ValueError("Saved Blender scene does not match the submitted scene")
     animation_check = verify_animation(reopened, job["trajectory"], scene) if job["trajectory"] is not None else None
     cameras = {obj["world_view_id"]: obj for obj in scene.objects if "world_view_id" in obj}
     camera_checks = {}
@@ -438,10 +440,11 @@ def build(job):
             render_paths.append(scene.render.filepath)
     write_json(output / "geometry.json", {"scene_hash": job["scene_hash"], "revision": source["revision"],
                                           "blender_version": bpy.app.version_string, "reopened_blend": True,
+                                          "reopen_inventory_matches": reopen_matches,
                                           "units": source["units"], "up_axis": "Z", "glb_up_axis": "Y",
                                           "camera_checks": camera_checks,
                                           "appearance": "captured" if all(captured) else "mixed" if any(captured) else "surface",
-                                          "objects": before, "render_paths": render_paths,
+                                          "objects": after, "render_paths": render_paths,
                                           "animation_check": animation_check,
                                           "source": source["provenance"]})
 

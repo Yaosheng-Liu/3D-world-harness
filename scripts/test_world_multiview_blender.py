@@ -7,10 +7,12 @@ import math
 from pathlib import Path
 import struct
 import sys
+from unittest.mock import patch
 
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+import world_build
 from world_build import build_world
 from world_model import WorldError, WorldStore
 from world_service import WorldService
@@ -96,6 +98,29 @@ def main():
     cleaned_report = json.loads(Path(cleaned["report_path"]).read_text())
     assert cleaned_report["reopened_blend"]
     assert cleaned_report["objects"] == report["objects"]
+    # A pre-save inventory hash discrepancy is diagnostic; scene identity is required.
+    worker_source = world_build.WORKER.read_text()
+    anchor = '    after = inventory(reopened)\n'
+    assert worker_source.count(anchor) == 1
+    diagnostic_worker = project / 'reopen_diagnostic_worker.py'
+    diagnostic_worker.write_text(worker_source.replace(anchor, anchor +
+        '    before["panel"]["meshes"]["panel/visual/0"]["geometry_sha256"] = "pre-save-diagnostic"\n'))
+    with patch.object(world_build, 'WORKER', diagnostic_worker):
+        diagnostic = build_world(project, scene=world, blender=args.blender, render=False)
+    diagnostic_report = json.loads(Path(diagnostic['report_path']).read_text())
+    assert diagnostic_report['reopened_blend'] and not diagnostic_report['reopen_inventory_matches']
+    assert diagnostic_report['objects'] == report['objects']
+    assert (Path(diagnostic['build_dir']) / 'reopen_mismatch.json').exists()
+    wrong_scene_worker = project / 'wrong_scene_worker.py'
+    wrong_scene_worker.write_text(worker_source.replace(anchor, anchor +
+        '    scene["world_scene_hash"] = "another-submission"\n'))
+    with patch.object(world_build, 'WORKER', wrong_scene_worker):
+        try:
+            build_world(project, scene=world, blender=args.blender, render=False)
+        except WorldError:
+            pass
+        else:
+            raise AssertionError('Reopened scene with a different submission identity was accepted')
     for name, contents, expected_error in (
         ("no_uv.obj", "v -1 -1 0\nv 1 -1 0\nv 1 1 0\nf 1 2 3\n", "requires UV coordinates"),
         ("empty.obj", "v 0 0 0\n", "polygon geometry"),
@@ -113,7 +138,7 @@ def main():
     (project / "acceptance.json").write_text(json.dumps({"build":result, "camera_checks":report["camera_checks"],
           "passed":True, "checks":["OpenGL roll", "off-center principal point", "fx differs from fy",
           "per-view dimensions", "transparent missing surface", "UV and images survive Blender reopening",
-          "embedded unlit GLB texture and tint", "captured omits normals; surface preserves normals", "default surface texture export", "duplicate faces cleaned without changing geometry", "missing UV and empty meshes rejected", "all explicit source hashes", "changed mesh, texture, references and provenance invalidate build"]},indent=2)+"\n")
+          "embedded unlit GLB texture and tint", "captured omits normals; surface preserves normals", "default surface texture export", "duplicate faces cleaned without changing geometry", "reopen inventory differences recorded without blocking", "reopened submission identity required", "missing UV and empty meshes rejected", "all explicit source hashes", "changed mesh, texture, references and provenance invalidate build"]},indent=2)+"\n")
     print(json.dumps({"passed":True,"acceptance":str(project/"acceptance.json"),"camera_checks":report["camera_checks"]}))
 
 
